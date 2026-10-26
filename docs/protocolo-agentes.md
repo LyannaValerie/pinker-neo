@@ -124,9 +124,39 @@ Uma revisão por entrega coerente, depois da validação.
 6. Depois das correções, uma revisão dirigida aos achados e ao efeito das mudanças. Uma
    nova revisão ampla só se o escopo aumentou.
 
-Use só revisores disponíveis e autorizados; não invente ferramentas, modelos ou contas.
-Sem revisor, registre a revisão como pendente no checkpoint. Uma autorrevisão nunca é
-apresentada como revisão independente.
+### Rota do revisor
+
+O revisor é o Codex pelo `codex-velina`, com o modelo `gpt-5.6-terra` (Terra 5.6),
+esforço `high`, sessão efêmera (`--ephemeral`) e sandbox `read-only`. O comando exato
+está na skill [`pinker-neo`](../.claude/skills/pinker-neo/SKILL.md). Não troque o revisor
+por um subagente Claude ou por outro modelo.
+
+- O implementador lança o revisor, sem pedir nova autorização à Founder, e recebe a
+  resposta. O prompt segue [`modelos/prompt-revisao.md`](modelos/prompt-revisao.md): sem
+  conclusão esperada e sem induzir aprovação.
+- Cada rodada é uma sessão nova. A seguinte recebe o candidato novo, os achados
+  anteriores, as decisões e as correções, e se concentra em fechar os achados e encontrar
+  regressões das correções, sem refazer a auditoria ampla.
+- Efêmera quer dizer sem continuidade implícita do revisor, não sem registro: o prompt,
+  o comando, a saída, o código de término e o relatório ficam em
+  `.tarefas/<id>/evidencias/`, sem credenciais.
+- Os arquivos do candidato ficam parados durante a revisão. Compare os hashes antes e
+  depois para mostrar que o revisor não os alterou.
+
+### Convergência
+
+O ciclo de revisão termina quando os critérios da tarefa estão cumpridos, as validações
+passam, não sobra achado bloqueante confirmado, as correções foram conferidas no
+candidato final e as sugestões não bloqueantes estão registradas. Não é preciso esgotar
+todas as sugestões possíveis, e um número de rodadas não basta para aceitar.
+
+Pare o ciclo e leve à Founder a menor decisão necessária quando houver repetição sem
+evidência nova, disputa sobre o contrato, ampliação de escopo ou correções seguidas que
+não convergem. Registre o ponto exato no checkpoint.
+
+Se faltar quota ou a ferramenta falhar, preserve a tarefa e o checkpoint e marque a
+revisão como pendente. Não troque de revisor, não desligue as restrições e não declare a
+entrega revisada. Uma autorrevisão nunca é apresentada como revisão independente.
 
 ## Escopo
 
