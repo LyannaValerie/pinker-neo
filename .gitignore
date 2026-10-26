@@ -1,4 +1,5 @@
 /target
-*.tokens
-*.ast
-*.semantic
+# Arquivos gerados pelas etapas do pipeline (pinker --emit).
+*.t
+*.a
+*.s

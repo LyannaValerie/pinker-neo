@@ -301,10 +301,11 @@ fn render_mostra_a_arvore_com_posicoes() {
     let source =
         "fun main()\n    let mut n = -1\n    if n < 0 and not false\n        say(\"negativo\")\n";
     let expected = "\
-POSIÇÃO  NÓ
-1:1      Função main
+# pinker ast 1 · fonte: teste.pk
+#POSIÇÃO NÓ
+1:1      Função main@1:5
 2:5        Bloco
-2:5          Let mut n
+2:5          Let mut n@2:13
 2:17           Unária -
 2:18             Inteiro 1 (base 10)
 3:5          If
@@ -318,6 +319,6 @@ POSIÇÃO  NÓ
 4:9              Chamada say
 4:13               Texto \"negativo\"
 ";
-    assert_eq!(ast::render(&program(source)), expected);
+    assert_eq!(ast::render(&program(source), "teste.pk"), expected);
 }
 // pink-nav: end

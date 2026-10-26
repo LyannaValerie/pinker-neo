@@ -416,7 +416,8 @@ fn caminhos_que_sempre_devolvem() {
 fn render_mostra_tipos_e_vinculos() {
     let source = "fun dobro(n: u8) -> u8\n    give n * 2\n\nfun main()\n    let n = dobro(3)\n    if true\n        let n = -1\n        say(n)\n";
     let expected = "\
-POSIÇÃO  NÓ
+# pinker semantic 1 · fonte: teste.pk
+#POSIÇÃO NÓ
 1:1      Função dobro -> u8
 1:11       Parâmetro n#0: u8
 2:5        Bloco
@@ -426,18 +427,18 @@ POSIÇÃO  NÓ
 2:14             Inteiro 2: u8
 4:1      Função main
 5:5        Bloco
-5:5          Let n#0: u8
+5:5          Let n#0@5:9: u8
 5:13           Chamada dobro: u8
 5:19             Inteiro 3: u8
 6:5          If
 6:8            Lógico true: bool
 7:9            Bloco
-7:9              Let n#1: i64
+7:9              Let n#1@7:13: i64
 7:17               Inteiro -1: i64
 8:9              Chamada say (predefinida)
 8:13               Variável n#1: i64
 ";
-    assert_eq!(checked::render(&checked(source)), expected);
+    assert_eq!(checked::render(&checked(source), "teste.pk"), expected);
 }
 // pink-nav: end
 

@@ -11,10 +11,17 @@ fn pinker() -> Command {
     Command::new(env!("CARGO_BIN_EXE_pinker"))
 }
 
-/// Cria `<nome>/ola.pk` com o conteúdo dado e devolve o caminho.
-fn source_file(name: &str, content: &str) -> PathBuf {
+/// Um diretório vazio só deste teste: nada de execuções anteriores sobra nele.
+fn fresh_dir(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Cria `<nome>/ola.pk` com o conteúdo dado, num diretório vazio, e devolve o caminho.
+fn source_file(name: &str, content: &str) -> PathBuf {
+    let dir = fresh_dir(name);
     let path = dir.join("ola.pk");
     fs::write(&path, content).unwrap();
     path
@@ -29,9 +36,10 @@ fn emit_tokens_grava_ao_lado_da_entrada() {
     let input = source_file("emit_padrao", "say(\"olá\")\n");
     let status = pinker().arg(&input).arg("--emit=tokens").status().unwrap();
     assert!(status.success());
-    let content = fs::read_to_string(input.with_extension("tokens")).unwrap();
+    let content = fs::read_to_string(input.with_extension("t")).unwrap();
     assert!(
-        content.starts_with("POSIÇÃO  TIPO           LEXEMA\n"),
+        content.starts_with("# pinker tokens 1 · fonte: ")
+            && content.contains("\n#POSIÇÃO TIPO           LEXEMA\n"),
         "{content}"
     );
     assert!(
@@ -77,7 +85,7 @@ fn erro_lexico_nao_grava_tokens() {
     let input = source_file("erro_sem_saida", "say(\"abc\n");
     let output = pinker().arg(&input).arg("--emit=tokens").output().unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert!(!input.with_extension("tokens").exists());
+    assert!(!input.with_extension("t").exists());
 }
 
 #[test]
@@ -98,8 +106,8 @@ fn emit_ast_grava_a_arvore() {
     let input = source_file("emit_ast", "fun main()\n    say(1)\n");
     let status = pinker().arg(&input).arg("--emit=ast").status().unwrap();
     assert!(status.success());
-    let content = fs::read_to_string(input.with_extension("ast")).unwrap();
-    assert!(content.contains("1:1      Função main\n"), "{content}");
+    let content = fs::read_to_string(input.with_extension("a")).unwrap();
+    assert!(content.contains("1:1      Função main@1:5\n"), "{content}");
     assert!(content.contains("2:5          Chamada say\n"), "{content}");
 }
 
@@ -113,7 +121,7 @@ fn erro_de_sintaxe_mostra_arquivo_linha_e_coluna() {
         stderr.contains("ola.pk:2:7: erro: esperava '=' ou '('"),
         "{stderr}"
     );
-    assert!(!input.with_extension("ast").exists());
+    assert!(!input.with_extension("a").exists());
 }
 
 #[test]
@@ -154,10 +162,8 @@ fn saida_igual_a_entrada_e_recusada() {
 fn saida_por_link_para_a_entrada_e_recusada() {
     let input = source_file("saida_por_link", "fun main()\n    say(1)\n");
     let dir = input.parent().unwrap();
-    let symlink = dir.join("simbolico.ast");
-    let hardlink = dir.join("fisico.ast");
-    let _ = fs::remove_file(&symlink);
-    let _ = fs::remove_file(&hardlink);
+    let symlink = dir.join("simbolico.a");
+    let hardlink = dir.join("fisico.a");
     std::os::unix::fs::symlink(&input, &symlink).unwrap();
     fs::hard_link(&input, &hardlink).unwrap();
     for alias in [&symlink, &hardlink] {
@@ -167,9 +173,8 @@ fn saida_por_link_para_a_entrada_e_recusada() {
 
 #[test]
 fn extensao_padrao_igual_a_entrada_e_recusada() {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("extensao_padrao");
-    fs::create_dir_all(&dir).unwrap();
-    let input = dir.join("programa.ast");
+    let dir = fresh_dir("extensao_padrao");
+    let input = dir.join("programa.a");
     fs::write(&input, "fun main()\n    say(1)\n").unwrap();
     assert_refuses_and_preserves(&input, &["--emit=ast"]);
 }
@@ -190,8 +195,11 @@ fn emit_semantic_grava_a_arvore_verificada() {
         .status()
         .unwrap();
     assert!(status.success());
-    let content = fs::read_to_string(input.with_extension("semantic")).unwrap();
-    assert!(content.contains("2:5          Let x#0: u8\n"), "{content}");
+    let content = fs::read_to_string(input.with_extension("s")).unwrap();
+    assert!(
+        content.contains("2:5          Let x#0@2:9: u8\n"),
+        "{content}"
+    );
 }
 
 #[test]
@@ -276,6 +284,116 @@ fn recursao_profunda_ate_o_limite_e_alem_dele() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("limite de 10000 chamadas aninhadas excedido"),
+        "{stderr}"
+    );
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Pipeline por arquivos pela CLI: .pk -> .t -> .a -> .s -> execução, igual ao caminho direto, e seus erros.
+// pink-keywords: teste, cli, pipeline, arquivo, .t, .a, .s, erro de formato, fonte
+#[test]
+fn pipeline_por_arquivos_e_igual_ao_direto() {
+    let input = source_file(
+        "pipeline_arquivos",
+        "fun dobro(n: int) -> int\n    give n * 2\n\nfun main()\n    say(dobro(21))\n    say(\"fim\\n\")\n",
+    );
+    let dir = input.parent().unwrap().to_path_buf();
+    for (from, stage) in [
+        ("ola.pk", "tokens"),
+        ("ola.t", "ast"),
+        ("ola.a", "semantic"),
+    ] {
+        let status = pinker()
+            .arg(dir.join(from))
+            .arg(format!("--emit={stage}"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "{from} -> {stage}");
+        // O arquivo produzido a partir do anterior é igual ao produzido direto do .pk.
+        let direct = pinker()
+            .arg(&input)
+            .args([&format!("--emit={stage}"), "-o", "-"])
+            .output()
+            .unwrap();
+        let extension = &stage[..1];
+        let by_file = fs::read(input.with_extension(extension)).unwrap();
+        assert_eq!(by_file, direct.stdout, "{stage}");
+    }
+    let by_file = pinker().arg(dir.join("ola.s")).output().unwrap();
+    let direct = pinker().arg(&input).output().unwrap();
+    assert_eq!(by_file.status.code(), Some(0));
+    assert_eq!(by_file.stdout, direct.stdout);
+    assert_eq!(String::from_utf8(by_file.stdout).unwrap(), "42\nfim\n\n");
+}
+
+#[test]
+fn emit_de_etapa_anterior_a_entrada_e_erro_de_uso() {
+    let input = source_file("etapa_anterior", "fun main()\n    say(1)\n");
+    pinker().arg(&input).arg("--emit=ast").status().unwrap();
+    let output = pinker()
+        .arg(input.with_extension("a"))
+        .arg("--emit=tokens")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("já é um arquivo da etapa ast"), "{stderr}");
+}
+
+#[test]
+fn arquivo_malformado_aponta_a_propria_linha() {
+    let input = source_file("arquivo_malformado", "fun main()\n    say(1)\n");
+    let tokens = input.with_extension("t");
+    fs::write(&tokens, "# pinker tokens 1 · fonte: ola.pk\n1:1      PALAVRA        fun\n1:5      COISA          x\n").unwrap();
+    let output = pinker().arg(&tokens).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("ola.t:3: erro de formato: tipo de token desconhecido 'COISA'"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn erro_num_t_editado_aponta_o_codigo_fonte() {
+    let input = source_file("t_editado", "fun main()\n    say(1)\n");
+    pinker().arg(&input).arg("--emit=tokens").status().unwrap();
+    let tokens = input.with_extension("t");
+    // Sem a quebra depois do cabeçalho da função, o parser não encontra o bloco.
+    let edited = fs::read_to_string(&tokens)
+        .unwrap()
+        .replacen("1:11     QUEBRA\n", "", 1);
+    fs::write(&tokens, edited).unwrap();
+    let output = pinker().arg(&tokens).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("ola.pk:2:5: erro: esperava o fim da linha"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn s_adulterado_e_recusado_antes_de_executar() {
+    let input = source_file("s_adulterado", "fun main()\n    say(1)\n");
+    pinker()
+        .arg(&input)
+        .arg("--emit=semantic")
+        .status()
+        .unwrap();
+    let semantic = input.with_extension("s");
+    let edited =
+        fs::read_to_string(&semantic)
+            .unwrap()
+            .replacen("Inteiro 1: i64", "Inteiro 1: text", 1);
+    fs::write(&semantic, edited).unwrap();
+    let output = pinker().arg(&semantic).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("ola.pk:2:9: erro: árvore inconsistente"),
         "{stderr}"
     );
 }

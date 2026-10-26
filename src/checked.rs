@@ -4,11 +4,16 @@
 //! uso de variável ligado à sua declaração e cada chamada ligada à função chamada. É a
 //! entrada do futuro interpretador.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::artifact::{
+    Format, FormatError, TreeLine, TreeReader, format_error, header, identifier, literal,
+    parse_position, split_word, tree_line,
+};
 use crate::ast::{BinaryOperator, UnaryOperator};
-use crate::token::Position;
+use crate::token::{Position, TokenKind, quote_text};
 
 // pink-nav: start
 // pink-resume: Tipos da primeira versão (inteiros de largura explícita, bool e text, com faixas e nomes) e a aritmética exata.
@@ -253,15 +258,58 @@ pub enum CheckedExpressionKind {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Formata a árvore verificada, com tipos e variáveis numeradas, para a saída de --emit=semantic.
-// pink-keywords: emit, render, formatação, saída, semantic, tipos, vínculos
-/// Uma linha por nó, como em `--emit=ast`, com o tipo de cada expressão. Cada variável
-/// aparece como `nome#n`, em que `n` identifica a declaração dentro da função.
-pub fn render(program: &CheckedProgram) -> String {
+// pink-resume: Fluxo de retorno: se um bloco nunca chega ao fim e se um break sai do laço que o contém.
+// pink-keywords: fluxo, give, break, loop, terminar, retorno
+/// Verdadeiro quando o bloco nunca chega ao fim: em todos os caminhos, ele devolve um
+/// valor ou fica preso num `loop` sem `break` que saia dele. Não chegar ao fim não é o
+/// mesmo que devolver: `loop` com só `continue` nunca devolve, mas também nunca termina.
+pub fn block_terminates(block: &CheckedBlock) -> bool {
+    block
+        .statements
+        .iter()
+        .any(|statement| match &statement.kind {
+            CheckedStatementKind::Give { .. } => true,
+            CheckedStatementKind::If {
+                then_block,
+                else_block: Some(else_block),
+                ..
+            } => block_terminates(then_block) && block_terminates(else_block),
+            CheckedStatementKind::Loop { body } => !breaks_out(body),
+            _ => false,
+        })
+}
+
+/// Verdadeiro quando o bloco tem um `break` que sai do laço que o contém (um `break`
+/// dentro de um laço interno pertence a esse laço).
+pub fn breaks_out(block: &CheckedBlock) -> bool {
+    block
+        .statements
+        .iter()
+        .any(|statement| match &statement.kind {
+            CheckedStatementKind::Break => true,
+            CheckedStatementKind::If {
+                then_block,
+                else_block,
+                ..
+            } => breaks_out(then_block) || else_block.as_ref().is_some_and(breaks_out),
+            _ => false,
+        })
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Grava a árvore verificada no formato .s (saída de --emit=semantic), com tipos e variáveis numeradas.
+// pink-keywords: emit, render, formatação, saída, semantic, tipos, vínculos, arquivo .s
+/// O arquivo `.s`: uma linha por nó, como no `.a`, com o tipo de cada expressão. Cada
+/// variável aparece como `nome#n`, em que `n` identifica a declaração dentro da função;
+/// a declaração (`Parâmetro` ou `Let`) traz também o tipo e a posição do nome.
+pub fn render(program: &CheckedProgram, source: &str) -> String {
+    let mut output = header(Format::Semantic, source);
+    output.push_str("#POSIÇÃO NÓ\n");
     let mut renderer = Renderer {
         program,
         variables: &[],
-        output: String::from("POSIÇÃO  NÓ\n"),
+        output,
     };
     for function in &program.functions {
         renderer.function(function);
@@ -277,10 +325,7 @@ struct Renderer<'a> {
 
 impl<'a> Renderer<'a> {
     fn line(&mut self, position: Position, depth: usize, text: &str) {
-        let position = format!("{}:{}", position.line, position.column);
-        let indent = "  ".repeat(depth);
-        self.output
-            .push_str(&format!("{position:<8} {indent}{text}\n"));
+        tree_line(&mut self.output, position, depth, text);
     }
 
     fn variable(&self, index: usize) -> String {
@@ -319,7 +364,13 @@ impl<'a> Renderer<'a> {
             CheckedStatementKind::Let { variable, value } => {
                 let declared = &self.variables[*variable];
                 let mutable = if declared.mutable { "mut " } else { "" };
-                let text = format!("Let {mutable}{}: {}", self.variable(*variable), declared.ty);
+                let text = format!(
+                    "Let {mutable}{}@{}:{}: {}",
+                    self.variable(*variable),
+                    declared.position.line,
+                    declared.position.column,
+                    declared.ty
+                );
                 self.line(position, depth, &text);
                 self.expression(value, depth + 1);
             }
@@ -394,7 +445,8 @@ impl<'a> Renderer<'a> {
                 self.line(position, depth, &format!("Lógico {value}: {ty}"));
             }
             CheckedExpressionKind::Text(value) => {
-                self.line(position, depth, &format!("Texto {value:?}: {ty}"));
+                let text = format!("Texto {}: {ty}", quote_text(value));
+                self.line(position, depth, &text);
             }
             CheckedExpressionKind::Variable(index) => {
                 let text = format!("Variável {}: {ty}", self.variable(*index));
@@ -417,6 +469,382 @@ impl<'a> Renderer<'a> {
                 self.expression(right, depth + 1);
             }
         }
+    }
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Lê um arquivo .s de volta para a árvore verificada: funções por nome, variáveis numeradas e tipos anotados.
+// pink-keywords: read, leitura, arquivo .s, árvore verificada, variável, tipo, chamada
+/// Lê um arquivo `.s` (sem conferir o cabeçalho, que `artifact::detect` já leu). Confere a
+/// forma e a numeração das variáveis; a coerência dos tipos e do fluxo fica para o
+/// verificador (`verifier::verify`), que precisa rodar antes do interpretador.
+pub fn read(content: &str) -> Result<CheckedProgram, FormatError> {
+    let mut reader = TreeReader::new(content)?;
+    // As chamadas apontam para as funções pelo nome; primeiro, os nomes de todas.
+    let mut functions_by_name = HashMap::new();
+    for line in reader.lines().iter().filter(|line| line.depth == 0) {
+        let text = split_word(line.text).1;
+        let name = text.split_once(" -> ").map_or(text, |(name, _)| name);
+        if functions_by_name
+            .insert(name.to_string(), functions_by_name.len())
+            .is_some()
+        {
+            return Err(format_error(line.line, format!("função '{name}' repetida")));
+        }
+    }
+    let mut functions = Vec::new();
+    while let Some(line) = reader.child(0)? {
+        let function = FunctionReader {
+            reader: &mut reader,
+            functions: &functions_by_name,
+            variables: Vec::new(),
+            references: Vec::new(),
+        }
+        .function(line)?;
+        functions.push(function);
+    }
+    let main = *functions_by_name
+        .get("main")
+        .ok_or_else(|| format_error(1, "o programa não tem uma função 'main'"))?;
+    Ok(CheckedProgram { functions, main })
+}
+
+fn parse_type(text: &str, line: usize) -> Result<Type, FormatError> {
+    Type::from_name(text).ok_or_else(|| format_error(line, format!("tipo desconhecido '{text}'")))
+}
+
+/// `nome#n`: o nome e o número da variável.
+fn variable_reference(text: &str, line: usize) -> Result<(&str, usize), FormatError> {
+    let invalid = || format_error(line, format!("esperava nome#número, encontrei '{text}'"));
+    let (name, index) = text.split_once('#').ok_or_else(invalid)?;
+    let index = index.parse().map_err(|_| invalid())?;
+    Ok((identifier(name, line)?, index))
+}
+
+struct FunctionReader<'r, 'a> {
+    reader: &'r mut TreeReader<'a>,
+    functions: &'r HashMap<String, usize>,
+    /// As declarações, pelo número; todas precisam aparecer.
+    variables: Vec<Option<Variable>>,
+    /// Usos de variáveis (número, nome, linha), conferidos com as declarações no fim.
+    references: Vec<(usize, String, usize)>,
+}
+
+impl<'a> FunctionReader<'_, 'a> {
+    fn function(mut self, line: TreeLine<'a>) -> Result<CheckedFunction, FormatError> {
+        let text = expect_word(&line, "Função")?;
+        let (name, result) = match text.split_once(" -> ") {
+            Some((name, result)) => (name, Some(parse_type(result, line.line)?)),
+            None => (text, None),
+        };
+        let name = identifier(name, line.line)?.to_string();
+        let mut parameters = Vec::new();
+        while self
+            .reader
+            .peek_child(1)
+            .is_some_and(|child| split_word(child.text).0 == "Parâmetro")
+        {
+            let child = self.reader.child(1)?.expect("peek_child confirmou a linha");
+            let text = expect_word(&child, "Parâmetro")?;
+            let (reference, ty) = text
+                .split_once(": ")
+                .ok_or_else(|| format_error(child.line, "esperava 'Parâmetro nome#n: tipo'"))?;
+            let ty = parse_type(ty, child.line)?;
+            let index = self.declare(reference, ty, false, true, child.position, child.line)?;
+            parameters.push(index);
+        }
+        let body = self.reader.expect_child(1, "o bloco da função", &line)?;
+        let body = self.block(body, 1)?;
+        self.reader.end(1)?;
+
+        let mut variables = Vec::new();
+        for (index, variable) in self.variables.into_iter().enumerate() {
+            variables.push(variable.ok_or_else(|| {
+                format_error(
+                    line.line,
+                    format!("a variável #{index} de '{name}' não é declarada"),
+                )
+            })?);
+        }
+        for (index, reference, at) in self.references {
+            let declared = variables.get(index).ok_or_else(|| {
+                format_error(at, format!("a variável #{index} não existe em '{name}'"))
+            })?;
+            if declared.name != reference {
+                return Err(format_error(
+                    at,
+                    format!(
+                        "a variável #{index} se chama '{}', não '{reference}'",
+                        declared.name
+                    ),
+                ));
+            }
+        }
+        Ok(CheckedFunction {
+            name,
+            parameters,
+            result,
+            variables,
+            body,
+            position: line.position,
+        })
+    }
+
+    fn declare(
+        &mut self,
+        reference: &str,
+        ty: Type,
+        mutable: bool,
+        parameter: bool,
+        position: Position,
+        line: usize,
+    ) -> Result<usize, FormatError> {
+        let (name, index) = variable_reference(reference, line)?;
+        if index >= self.variables.len() {
+            self.variables.resize(index + 1, None);
+        }
+        if self.variables[index].is_some() {
+            return Err(format_error(
+                line,
+                format!("a variável #{index} é declarada mais de uma vez"),
+            ));
+        }
+        self.variables[index] = Some(Variable {
+            name: name.to_string(),
+            ty,
+            mutable,
+            parameter,
+            position,
+        });
+        Ok(index)
+    }
+
+    fn reference(&mut self, text: &str, line: usize) -> Result<usize, FormatError> {
+        let (name, index) = variable_reference(text, line)?;
+        self.references.push((index, name.to_string(), line));
+        Ok(index)
+    }
+
+    fn block(&mut self, line: TreeLine<'a>, depth: usize) -> Result<CheckedBlock, FormatError> {
+        expect_word(&line, "Bloco")?;
+        let mut statements = Vec::new();
+        while let Some(child) = self.reader.child(depth + 1)? {
+            statements.push(self.statement(child, depth + 1)?);
+        }
+        if statements.is_empty() {
+            return Err(format_error(line.line, "bloco vazio"));
+        }
+        Ok(CheckedBlock {
+            statements,
+            position: line.position,
+        })
+    }
+
+    fn expect_block(
+        &mut self,
+        parent: &TreeLine<'a>,
+        depth: usize,
+        what: &str,
+    ) -> Result<CheckedBlock, FormatError> {
+        let line = self.reader.expect_child(depth, what, parent)?;
+        self.block(line, depth)
+    }
+
+    fn statement(
+        &mut self,
+        line: TreeLine<'a>,
+        depth: usize,
+    ) -> Result<CheckedStatement, FormatError> {
+        let child = depth + 1;
+        let (word, rest) = split_word(line.text);
+        let kind = match word {
+            "Let" => {
+                let (mutable, rest) = match rest.strip_prefix("mut ") {
+                    Some(rest) => (true, rest),
+                    None => (false, rest),
+                };
+                let invalid =
+                    || format_error(line.line, "esperava 'Let nome#n@linha:coluna: tipo'");
+                let (declaration, ty) = rest.split_once(": ").ok_or_else(invalid)?;
+                let (reference, position) = declaration.split_once('@').ok_or_else(invalid)?;
+                let position = parse_position(position, line.line)?;
+                let ty = parse_type(ty, line.line)?;
+                let variable = self.declare(reference, ty, mutable, false, position, line.line)?;
+                let value = self.expect_expression(&line, child)?;
+                CheckedStatementKind::Let { variable, value }
+            }
+            "Atribuição" => {
+                let variable = self.reference(rest, line.line)?;
+                let value = self.expect_expression(&line, child)?;
+                CheckedStatementKind::Assign { variable, value }
+            }
+            "If" => {
+                let condition = self.expect_expression(&line, child)?;
+                let then_block = self.expect_block(&line, child, "o bloco do if")?;
+                let else_block = match self.reader.peek_child(child) {
+                    Some(next) if next.text == "Else" => {
+                        let else_line = self
+                            .reader
+                            .child(child)?
+                            .expect("peek_child confirmou a linha");
+                        let block = self.expect_block(&else_line, child + 1, "o bloco do else")?;
+                        self.reader.end(child + 1)?;
+                        Some(block)
+                    }
+                    _ => None,
+                };
+                CheckedStatementKind::If {
+                    condition,
+                    then_block,
+                    else_block,
+                }
+            }
+            "While" => {
+                let condition = self.expect_expression(&line, child)?;
+                let body = self.expect_block(&line, child, "o bloco do while")?;
+                CheckedStatementKind::While { condition, body }
+            }
+            "Loop" => CheckedStatementKind::Loop {
+                body: self.expect_block(&line, child, "o bloco do loop")?,
+            },
+            "Break" if rest.is_empty() => CheckedStatementKind::Break,
+            "Continue" if rest.is_empty() => CheckedStatementKind::Continue,
+            "Give" if rest.is_empty() => {
+                let value = match self.reader.child(child)? {
+                    Some(value) => Some(self.expression(value, child)?),
+                    None => None,
+                };
+                CheckedStatementKind::Give { value }
+            }
+            "Chamada" => {
+                // Numa chamada solta, um resultado anotado (`: tipo`) é descartado.
+                let callee = rest.split_once(": ").map_or(rest, |(callee, _)| callee);
+                CheckedStatementKind::Call(self.call(&line, callee, child)?)
+            }
+            _ => {
+                return Err(format_error(
+                    line.line,
+                    format!("instrução desconhecida '{}'", line.text),
+                ));
+            }
+        };
+        self.reader.end(child)?;
+        Ok(CheckedStatement {
+            kind,
+            position: line.position,
+        })
+    }
+
+    fn expect_expression(
+        &mut self,
+        parent: &TreeLine<'a>,
+        depth: usize,
+    ) -> Result<CheckedExpression, FormatError> {
+        let line = self.reader.expect_child(depth, "uma expressão", parent)?;
+        self.expression(line, depth)
+    }
+
+    fn expression(
+        &mut self,
+        line: TreeLine<'a>,
+        depth: usize,
+    ) -> Result<CheckedExpression, FormatError> {
+        let child = depth + 1;
+        let invalid = || format_error(line.line, format!("expressão inválida '{}'", line.text));
+        if let Some(conversion) = line.text.strip_prefix("Conversão morph: ") {
+            let (from, to) = conversion.split_once(" -> ").ok_or_else(invalid)?;
+            let (from, ty) = (parse_type(from, line.line)?, parse_type(to, line.line)?);
+            let argument = self.expect_expression(&line, child)?;
+            if argument.ty != from {
+                return Err(format_error(
+                    line.line,
+                    format!(
+                        "a conversão diz partir de {from}, mas o argumento é {}",
+                        argument.ty
+                    ),
+                ));
+            }
+            self.reader.end(child)?;
+            let call = CheckedCall {
+                callee: Callee::Morph,
+                arguments: vec![argument],
+            };
+            return Ok(CheckedExpression {
+                kind: CheckedExpressionKind::Call(call),
+                ty,
+                position: line.position,
+            });
+        }
+        let (head, ty) = line.text.rsplit_once(": ").ok_or_else(|| {
+            format_error(
+                line.line,
+                format!("falta o tipo da expressão em '{}'", line.text),
+            )
+        })?;
+        let ty = parse_type(ty, line.line)?;
+        let (word, rest) = split_word(head);
+        let kind = match word {
+            "Inteiro" => CheckedExpressionKind::Integer(rest.parse().map_err(|_| invalid())?),
+            "Lógico" => match rest {
+                "true" => CheckedExpressionKind::Bool(true),
+                "false" => CheckedExpressionKind::Bool(false),
+                _ => return Err(invalid()),
+            },
+            "Texto" => match literal(rest, line.line)? {
+                TokenKind::Text(value) => CheckedExpressionKind::Text(Rc::from(value.as_str())),
+                _ => return Err(invalid()),
+            },
+            "Variável" => CheckedExpressionKind::Variable(self.reference(rest, line.line)?),
+            "Chamada" => CheckedExpressionKind::Call(self.call(&line, rest, child)?),
+            "Unária" => CheckedExpressionKind::Unary {
+                operator: UnaryOperator::from_spelling(rest).ok_or_else(invalid)?,
+                operand: Box::new(self.expect_expression(&line, child)?),
+            },
+            "Binária" => CheckedExpressionKind::Binary {
+                operator: BinaryOperator::from_spelling(rest).ok_or_else(invalid)?,
+                left: Box::new(self.expect_expression(&line, child)?),
+                right: Box::new(self.expect_expression(&line, child)?),
+            },
+            _ => return Err(invalid()),
+        };
+        self.reader.end(child)?;
+        Ok(CheckedExpression {
+            kind,
+            ty,
+            position: line.position,
+        })
+    }
+
+    /// `Chamada nome` ou `Chamada say (predefinida)`, com os argumentos como filhos.
+    fn call(
+        &mut self,
+        line: &TreeLine<'a>,
+        callee: &str,
+        depth: usize,
+    ) -> Result<CheckedCall, FormatError> {
+        let callee =
+            match callee {
+                "say (predefinida)" => Callee::Say,
+                name => Callee::Function(*self.functions.get(name).ok_or_else(|| {
+                    format_error(line.line, format!("a função '{name}' não existe"))
+                })?),
+            };
+        let mut arguments = Vec::new();
+        while let Some(argument) = self.reader.child(depth)? {
+            arguments.push(self.expression(argument, depth)?);
+        }
+        Ok(CheckedCall { callee, arguments })
+    }
+}
+
+fn expect_word<'a>(line: &TreeLine<'a>, word: &str) -> Result<&'a str, FormatError> {
+    match split_word(line.text) {
+        (found, rest) if found == word => Ok(rest),
+        _ => Err(format_error(
+            line.line,
+            format!("esperava '{word}', encontrei '{}'", line.text),
+        )),
     }
 }
 // pink-nav: end

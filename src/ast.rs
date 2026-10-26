@@ -3,7 +3,11 @@
 //! A árvore registra só a estrutura do programa. Tipos, nomes e regras de contexto
 //! (como `break` fora de laço) são verificados pela análise semântica.
 
-use crate::token::{Base, Position};
+use crate::artifact::{
+    Format, FormatError, TreeLine, TreeReader, format_error, header, identifier, literal,
+    parse_position, split_field, split_word, tree_line,
+};
+use crate::token::{Base, Position, TokenKind, quote_text};
 
 // pink-nav: start
 // pink-resume: Nós da AST: programa, funções, blocos, instruções e expressões, cada um com sua posição.
@@ -160,9 +164,31 @@ impl UnaryOperator {
             UnaryOperator::Not => "not",
         }
     }
+
+    pub fn from_spelling(spelling: &str) -> Option<UnaryOperator> {
+        [UnaryOperator::Negate, UnaryOperator::Not]
+            .into_iter()
+            .find(|operator| operator.as_str() == spelling)
+    }
 }
 
 impl BinaryOperator {
+    const ALL: [BinaryOperator; 13] = [
+        BinaryOperator::Or,
+        BinaryOperator::And,
+        BinaryOperator::Equal,
+        BinaryOperator::NotEqual,
+        BinaryOperator::Less,
+        BinaryOperator::LessEqual,
+        BinaryOperator::Greater,
+        BinaryOperator::GreaterEqual,
+        BinaryOperator::Add,
+        BinaryOperator::Subtract,
+        BinaryOperator::Multiply,
+        BinaryOperator::Divide,
+        BinaryOperator::Remainder,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             BinaryOperator::Or => "or",
@@ -180,21 +206,36 @@ impl BinaryOperator {
             BinaryOperator::Remainder => "%",
         }
     }
+
+    pub fn from_spelling(spelling: &str) -> Option<BinaryOperator> {
+        Self::ALL
+            .into_iter()
+            .find(|operator| operator.as_str() == spelling)
+    }
 }
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Formata a AST como árvore indentada, com a posição de cada nó, para a saída de --emit=ast.
-// pink-keywords: emit, render, formatação, saída, ast, árvore
-/// Uma linha por nó: posição e descrição, com os filhos indentados sob o pai.
-pub fn render(program: &Program) -> String {
-    let mut out = Renderer {
-        output: String::from("POSIÇÃO  NÓ\n"),
-    };
+// pink-resume: Grava a AST no formato .a (saída de --emit=ast): árvore indentada com a posição de cada nó e de cada nome.
+// pink-keywords: emit, render, formatação, saída, ast, árvore, arquivo .a
+/// O arquivo `.a`: o cabeçalho e uma linha por nó, com a posição e a descrição, e os
+/// filhos indentados sob o pai. Nomes e tipos levam a própria posição em `@linha:coluna`.
+pub fn render(program: &Program, source: &str) -> String {
+    let mut output = header(Format::Ast, source);
+    output.push_str("#POSIÇÃO NÓ\n");
+    let mut renderer = Renderer { output };
     for function in &program.functions {
-        out.function(function, 0);
+        renderer.function(function, 0);
     }
-    out.output
+    renderer.output
+}
+
+/// `nome@linha:coluna`.
+fn at(name: &Name) -> String {
+    format!(
+        "{}@{}:{}",
+        name.text, name.position.line, name.position.column
+    )
 }
 
 struct Renderer {
@@ -203,31 +244,23 @@ struct Renderer {
 
 impl Renderer {
     fn line(&mut self, position: Position, depth: usize, text: &str) {
-        let position = format!("{}:{}", position.line, position.column);
-        let indent = "  ".repeat(depth);
-        self.output
-            .push_str(&format!("{position:<8} {indent}{text}\n"));
+        tree_line(&mut self.output, position, depth, text);
     }
 
     fn function(&mut self, function: &Function, depth: usize) {
         let result = match &function.result {
-            Some(type_name) => format!(" -> {}", type_name.text),
+            Some(type_name) => format!(" -> {}", at(type_name)),
             None => String::new(),
         };
-        self.line(
-            function.position,
-            depth,
-            &format!("Função {}{result}", function.name.text),
-        );
+        let text = format!("Função {}{result}", at(&function.name));
+        self.line(function.position, depth, &text);
         for parameter in &function.parameters {
-            self.line(
-                parameter.name.position,
-                depth + 1,
-                &format!(
-                    "Parâmetro {}: {}",
-                    parameter.name.text, parameter.type_name.text
-                ),
+            let text = format!(
+                "Parâmetro {}: {}",
+                parameter.name.text,
+                at(&parameter.type_name)
             );
+            self.line(parameter.name.position, depth + 1, &text);
         }
         self.block(&function.body, depth + 1);
     }
@@ -250,13 +283,13 @@ impl Renderer {
             } => {
                 let mutable = if *mutable { "mut " } else { "" };
                 let type_name = match type_name {
-                    Some(type_name) => format!(": {}", type_name.text),
+                    Some(type_name) => format!(": {}", at(type_name)),
                     None => String::new(),
                 };
                 self.line(
                     position,
                     depth,
-                    &format!("Let {mutable}{}{type_name}", name.text),
+                    &format!("Let {mutable}{}{type_name}", at(name)),
                 );
                 self.expression(value, depth + 1);
             }
@@ -312,13 +345,17 @@ impl Renderer {
         let position = expression.position;
         match &expression.kind {
             ExpressionKind::Integer { base, digits } => {
-                self.line(
-                    position,
-                    depth,
-                    &format!("Inteiro {digits} (base {})", base.radix()),
-                );
+                let prefix = match base {
+                    Base::Decimal => "",
+                    Base::Hexadecimal => "0x",
+                    Base::Binary => "0b",
+                };
+                let text = format!("Inteiro {prefix}{digits} (base {})", base.radix());
+                self.line(position, depth, &text);
             }
-            ExpressionKind::Text(value) => self.line(position, depth, &format!("Texto {value:?}")),
+            ExpressionKind::Text(value) => {
+                self.line(position, depth, &format!("Texto {}", quote_text(value)));
+            }
             ExpressionKind::Bool(value) => self.line(position, depth, &format!("Lógico {value}")),
             ExpressionKind::Name(name) => self.line(position, depth, &format!("Nome {name}")),
             ExpressionKind::Call(call) => self.call(call, position, depth),
@@ -337,5 +374,264 @@ impl Renderer {
             }
         }
     }
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Lê um arquivo .a de volta para a AST, nó por nó, conferindo a forma de cada linha e os filhos esperados.
+// pink-keywords: read, leitura, arquivo .a, ast, árvore, nó, filho
+/// Lê um arquivo `.a` (sem conferir o cabeçalho, que `artifact::detect` já leu). Confere
+/// só a forma: a análise semântica confere o resto, como faz com a saída do parser.
+pub fn read(content: &str) -> Result<Program, FormatError> {
+    let mut reader = TreeReader::new(content)?;
+    let mut functions = Vec::new();
+    while let Some(line) = reader.child(0)? {
+        functions.push(read_function(&mut reader, line)?);
+    }
+    Ok(Program { functions })
+}
+
+/// O texto de um nó depois da palavra que o identifica, ou erro se for outro nó.
+fn node<'a>(line: &TreeLine<'a>, word: &str) -> Result<&'a str, FormatError> {
+    match split_word(line.text) {
+        (found, rest) if found == word => Ok(rest),
+        _ => Err(format_error(
+            line.line,
+            format!("esperava '{word}', encontrei '{}'", line.text),
+        )),
+    }
+}
+
+/// `nome@linha:coluna`.
+fn named(text: &str, line: usize) -> Result<Name, FormatError> {
+    let (name, position) = text.split_once('@').ok_or_else(|| {
+        format_error(
+            line,
+            format!("esperava nome@linha:coluna, encontrei '{text}'"),
+        )
+    })?;
+    Ok(Name {
+        text: identifier(name, line)?.to_string(),
+        position: parse_position(position, line)?,
+    })
+}
+
+fn read_function(reader: &mut TreeReader, line: TreeLine) -> Result<Function, FormatError> {
+    let text = node(&line, "Função")?;
+    let (name, result) = match text.split_once(" -> ") {
+        Some((name, result)) => (name, Some(result)),
+        None => (text, None),
+    };
+    let name = named(name, line.line)?;
+    let result = result.map(|result| named(result, line.line)).transpose()?;
+    let mut parameters = Vec::new();
+    while reader
+        .peek_child(1)
+        .is_some_and(|child| split_word(child.text).0 == "Parâmetro")
+    {
+        let child = reader.child(1)?.expect("peek_child confirmou a linha");
+        let text = node(&child, "Parâmetro")?;
+        let (name, type_name) = text.split_once(": ").ok_or_else(|| {
+            format_error(child.line, "esperava 'Parâmetro nome: tipo@linha:coluna'")
+        })?;
+        parameters.push(Parameter {
+            name: Name {
+                text: identifier(name, child.line)?.to_string(),
+                position: child.position,
+            },
+            type_name: named(type_name, child.line)?,
+        });
+    }
+    let body = reader.expect_child(1, "o bloco da função", &line)?;
+    let body = read_block(reader, body, 1)?;
+    reader.end(1)?;
+    Ok(Function {
+        name,
+        parameters,
+        result,
+        body,
+        position: line.position,
+    })
+}
+
+fn read_block(reader: &mut TreeReader, line: TreeLine, depth: usize) -> Result<Block, FormatError> {
+    node(&line, "Bloco")?;
+    let mut statements = Vec::new();
+    while let Some(child) = reader.child(depth + 1)? {
+        statements.push(read_statement(reader, child, depth + 1)?);
+    }
+    if statements.is_empty() {
+        return Err(format_error(line.line, "bloco vazio"));
+    }
+    Ok(Block {
+        statements,
+        position: line.position,
+    })
+}
+
+fn read_statement(
+    reader: &mut TreeReader,
+    line: TreeLine,
+    depth: usize,
+) -> Result<Statement, FormatError> {
+    let child = depth + 1;
+    let (word, rest) = split_word(line.text);
+    let kind = match word {
+        "Let" => {
+            let (mutable, rest) = match rest.strip_prefix("mut ") {
+                Some(rest) => (true, rest),
+                None => (false, rest),
+            };
+            let (name, type_name) = match rest.split_once(": ") {
+                Some((name, type_name)) => (name, Some(type_name)),
+                None => (rest, None),
+            };
+            StatementKind::Let {
+                mutable,
+                name: named(name, line.line)?,
+                type_name: type_name.map(|t| named(t, line.line)).transpose()?,
+                value: expect_expression(reader, &line, child)?,
+            }
+        }
+        "Atribuição" => StatementKind::Assign {
+            target: Name {
+                text: identifier(rest, line.line)?.to_string(),
+                position: line.position,
+            },
+            value: expect_expression(reader, &line, child)?,
+        },
+        "If" => {
+            let condition = expect_expression(reader, &line, child)?;
+            let then_block = reader.expect_child(child, "o bloco do if", &line)?;
+            let then_block = read_block(reader, then_block, child)?;
+            let else_branch = match reader.peek_child(child) {
+                Some(next) if next.text == "Else" => {
+                    let else_line = reader.child(child)?.expect("peek_child confirmou a linha");
+                    let inner =
+                        reader.expect_child(child + 1, "o bloco ou o if do else", &else_line)?;
+                    let branch = if split_word(inner.text).0 == "If" {
+                        ElseBranch::If(Box::new(read_statement(reader, inner, child + 1)?))
+                    } else {
+                        ElseBranch::Block(read_block(reader, inner, child + 1)?)
+                    };
+                    reader.end(child + 1)?;
+                    Some(Else {
+                        branch,
+                        position: else_line.position,
+                    })
+                }
+                _ => None,
+            };
+            StatementKind::If {
+                condition,
+                then_block,
+                else_branch,
+            }
+        }
+        "While" => {
+            let condition = expect_expression(reader, &line, child)?;
+            let body = reader.expect_child(child, "o bloco do while", &line)?;
+            StatementKind::While {
+                condition,
+                body: read_block(reader, body, child)?,
+            }
+        }
+        "Loop" => {
+            let body = reader.expect_child(child, "o bloco do loop", &line)?;
+            StatementKind::Loop {
+                body: read_block(reader, body, child)?,
+            }
+        }
+        "Break" if rest.is_empty() => StatementKind::Break,
+        "Continue" if rest.is_empty() => StatementKind::Continue,
+        "Give" if rest.is_empty() => {
+            let value = match reader.child(child)? {
+                Some(value) => Some(read_expression(reader, value, child)?),
+                None => None,
+            };
+            StatementKind::Give { value }
+        }
+        "Chamada" => StatementKind::Call(read_call(reader, &line, rest, child)?),
+        _ => {
+            return Err(format_error(
+                line.line,
+                format!("instrução desconhecida '{}'", line.text),
+            ));
+        }
+    };
+    reader.end(child)?;
+    Ok(Statement {
+        kind,
+        position: line.position,
+    })
+}
+
+fn expect_expression(
+    reader: &mut TreeReader,
+    parent: &TreeLine,
+    depth: usize,
+) -> Result<Expression, FormatError> {
+    let line = reader.expect_child(depth, "uma expressão", parent)?;
+    read_expression(reader, line, depth)
+}
+
+fn read_expression(
+    reader: &mut TreeReader,
+    line: TreeLine,
+    depth: usize,
+) -> Result<Expression, FormatError> {
+    let child = depth + 1;
+    let (word, rest) = split_word(line.text);
+    let invalid = || format_error(line.line, format!("expressão inválida '{}'", line.text));
+    let kind = match word {
+        "Inteiro" => match literal(split_field(rest).0, line.line)? {
+            TokenKind::Integer { base, digits } => ExpressionKind::Integer { base, digits },
+            _ => return Err(invalid()),
+        },
+        "Texto" => match literal(rest, line.line)? {
+            TokenKind::Text(value) => ExpressionKind::Text(value),
+            _ => return Err(invalid()),
+        },
+        "Lógico" => match rest {
+            "true" => ExpressionKind::Bool(true),
+            "false" => ExpressionKind::Bool(false),
+            _ => return Err(invalid()),
+        },
+        "Nome" => ExpressionKind::Name(identifier(rest, line.line)?.to_string()),
+        "Chamada" => ExpressionKind::Call(read_call(reader, &line, rest, child)?),
+        "Unária" => ExpressionKind::Unary {
+            operator: UnaryOperator::from_spelling(rest).ok_or_else(invalid)?,
+            operand: Box::new(expect_expression(reader, &line, child)?),
+        },
+        "Binária" => ExpressionKind::Binary {
+            operator: BinaryOperator::from_spelling(rest).ok_or_else(invalid)?,
+            left: Box::new(expect_expression(reader, &line, child)?),
+            right: Box::new(expect_expression(reader, &line, child)?),
+        },
+        _ => return Err(invalid()),
+    };
+    reader.end(child)?;
+    Ok(Expression {
+        kind,
+        position: line.position,
+    })
+}
+
+/// Os argumentos de uma chamada são os filhos da linha `Chamada nome`.
+fn read_call(
+    reader: &mut TreeReader,
+    line: &TreeLine,
+    callee: &str,
+    depth: usize,
+) -> Result<Call, FormatError> {
+    let callee = Name {
+        text: identifier(callee, line.line)?.to_string(),
+        position: line.position,
+    };
+    let mut arguments = Vec::new();
+    while let Some(argument) = reader.child(depth)? {
+        arguments.push(read_expression(reader, argument, depth)?);
+    }
+    Ok(Call { callee, arguments })
 }
 // pink-nav: end

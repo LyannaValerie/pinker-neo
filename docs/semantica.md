@@ -124,15 +124,17 @@ fun wait_forever() -> int
 
 ## `--emit=semantic`
 
-`pinker <arquivo.pk> --emit=semantic` grava a árvore verificada em `<arquivo>.semantic`.
-O formato é o de `--emit=ast`, com o tipo de cada expressão. Cada variável aparece como
+`pinker <arquivo.pk> --emit=semantic` grava a árvore verificada em `<arquivo>.s`. O
+formato é o de `--emit=ast`, com o tipo de cada expressão. Cada variável aparece como
 `nome#n`, em que `n` identifica a declaração dentro da função; assim o sombreamento fica
-visível. A etapa não executa o programa.
+visível. A declaração (`Let`) traz também a posição do nome. A etapa não executa o
+programa; o arquivo `.s` serve de entrada para o interpretador (ver
+[`arquivos.md`](arquivos.md)).
 
 ```text
-5:5          Let n#0: u8
+5:5          Let n#0@5:9: u8
 ...
-7:9              Let n#1: i64
+7:9              Let n#1@7:13: i64
 7:17               Inteiro -1: i64
 8:9              Chamada say (predefinida)
 8:13               Variável n#1: i64

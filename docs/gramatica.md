@@ -101,16 +101,21 @@ O parser verifica só a estrutura. Ficam para a análise semântica, entre outra
 
 ## `--emit=ast`
 
-`pinker <arquivo.pk> --emit=ast` grava a árvore em `<arquivo>.ast`: uma linha por nó, com
-a posição e a descrição, e os filhos indentados sob o pai. A posição de uma expressão
+`pinker <arquivo.pk> --emit=ast` grava a árvore em `<arquivo>.a`: uma linha por nó, com a
+posição e a descrição, e os filhos indentados sob o pai. A posição de uma expressão
 binária é a do operador; os demais nós começam no primeiro token. Os parênteses não
-aparecem na árvore: o agrupamento está na própria forma dela.
+aparecem na árvore: o agrupamento está na própria forma dela. Nomes e tipos levam a
+própria posição em `@linha:coluna`.
 
 ```text
-POSIÇÃO  NÓ
-1:1      Função main
+# pinker ast 1 · fonte: teste.pk
+#POSIÇÃO NÓ
+1:1      Função main@1:5
 2:5        Bloco
-2:5          Let mut n
+2:5          Let mut n@2:13
 2:17           Unária -
 2:18             Inteiro 1 (base 10)
 ```
+
+O arquivo `.a` também serve de entrada para a análise semântica (ver
+[`arquivos.md`](arquivos.md)).

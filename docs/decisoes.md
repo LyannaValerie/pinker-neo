@@ -220,7 +220,7 @@ Pontos que o contrato não fixava e que o primeiro lexer decidiu. Podem ser revi
 
 ### `--emit=tokens`
 
-`pinker <arquivo.pk> --emit=tokens` grava os tokens em `<arquivo>.tokens`, ao lado da
+`pinker <arquivo.pk> --emit=tokens` grava os tokens em `<arquivo>.t`, ao lado da
 entrada. `-o <caminho>` escolhe outro destino, e `-o -` escreve na saída padrão. Sem
 `--emit`, o programa passa por todas as etapas e é executado (ver
 [`execucao.md`](execucao.md)).
@@ -228,7 +228,9 @@ Com `--emit`, as etapas rodam até a pedida: `--emit=tokens` funciona mesmo que 
 arquivo tenha erro de sintaxe.
 
 A gramática, o parser e `--emit=ast` estão em [`gramatica.md`](gramatica.md); a análise
-semântica e `--emit=semantic`, em [`semantica.md`](semantica.md).
+semântica e `--emit=semantic`, em [`semantica.md`](semantica.md). Cada arquivo de etapa
+(`.t`, `.a`, `.s`) também serve de entrada para a etapa seguinte; os formatos estão em
+[`arquivos.md`](arquivos.md).
 
 A CLI recusa gravar a saída sobre o próprio arquivo de entrada, inclusive quando o
 caminho de saída leva a ele por um link simbólico ou físico, e não altera a entrada. A

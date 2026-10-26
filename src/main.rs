@@ -5,53 +5,35 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{env, fs, thread};
 
+use pinker::artifact::{self, Format, FormatError};
 use pinker::diagnostic::Diagnostic;
-use pinker::{ast, checked, interpreter, lexer, parser, semantic, token};
+use pinker::{ast, checked, interpreter, lexer, parser, semantic, token, verifier};
 
-const USAGE: &str = "uso: pinker <arquivo.pk> [--emit=<etapa>] [-o <saída>]
+const USAGE: &str = "uso: pinker <arquivo> [--emit=<etapa>] [-o <saída>]
 
-  --emit=<etapa>  grava o resultado de uma etapa do pipeline
-                  etapas disponíveis: tokens, ast, semantic
+  <arquivo>       código-fonte (.pk) ou o arquivo de uma etapa (.t, .a ou .s); o
+                  pipeline começa na etapa seguinte à do arquivo
+  --emit=<etapa>  grava o resultado de uma etapa do pipeline e para nela
+                  etapas: tokens (.t), ast (.a), semantic (.s)
   -o <saída>      caminho do arquivo gravado (padrão: o arquivo de entrada com a
-                  extensão da etapa, como ola.tokens); '-' escreve na saída padrão
+                  extensão da etapa, como ola.t); '-' escreve na saída padrão
   -h, --help      mostra esta ajuda
 
-Sem --emit, o programa passa por todas as etapas e é executado.
+Sem --emit, o programa passa pelas etapas restantes e é executado:
+  pinker ola.pk --emit=tokens     # ola.pk -> ola.t
+  pinker ola.t --emit=ast         # ola.t  -> ola.a
+  pinker ola.a --emit=semantic    # ola.a  -> ola.s
+  pinker ola.s                    # executa
 
 Códigos de saída: 0 sucesso, 1 erro de compilação ou de arquivo, 2 uso incorreto,
 3 falha de execução.";
 
 // pink-nav: start
-// pink-resume: Opções da linha de comando e as etapas do pipeline que --emit pode gravar.
+// pink-resume: Opções da linha de comando: o arquivo de entrada, a etapa de --emit e o destino de -o.
 // pink-keywords: cli, argumentos, opções, emit, etapa, saída, -o
-enum Stage {
-    Tokens,
-    Ast,
-    Semantic,
-}
-
-impl Stage {
-    fn from_name(name: &str) -> Option<Stage> {
-        match name {
-            "tokens" => Some(Stage::Tokens),
-            "ast" => Some(Stage::Ast),
-            "semantic" => Some(Stage::Semantic),
-            _ => None,
-        }
-    }
-
-    fn extension(&self) -> &'static str {
-        match self {
-            Stage::Tokens => "tokens",
-            Stage::Ast => "ast",
-            Stage::Semantic => "semantic",
-        }
-    }
-}
-
 struct Options {
     input: PathBuf,
-    emit: Option<Stage>,
+    emit: Option<Format>,
     output: Option<String>,
 }
 
@@ -65,10 +47,10 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
         if arg == "-h" || arg == "--help" {
             return Ok(None);
         } else if let Some(name) = arg.strip_prefix("--emit=") {
-            let stage = Stage::from_name(name).ok_or_else(|| {
+            let format = Format::from_name(name).ok_or_else(|| {
                 format!("etapa desconhecida '{name}'; etapas disponíveis: tokens, ast, semantic")
             })?;
-            emit = Some(stage);
+            emit = Some(format);
         } else if arg == "-o" {
             let path = args.next().ok_or("'-o' precisa de um caminho")?;
             output = Some(path.clone());
@@ -93,8 +75,8 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Ponto de entrada: lê o arquivo, roda as etapas até a pedida, executa o programa e define o código de saída.
-// pink-keywords: main, execução, erro, código de saída, gravar arquivo, proteção da entrada, pilha
+// pink-resume: Ponto de entrada: thread com pilha ampliada, códigos de saída e o tipo de falha com o seu código.
+// pink-keywords: main, thread, pilha, código de saída, falha
 /// Pilha da thread que roda o pipeline. O interpretador é recursivo, e esta pilha foi
 /// validada nos cenários testados (até `MAX_CALL_DEPTH` chamadas aninhadas, em debug e
 /// release); não é uma garantia geral contra estouro.
@@ -147,59 +129,120 @@ impl From<String> for Failure {
         Failure { message, code: 1 }
     }
 }
+// pink-nav: end
 
-/// Roda as etapas em ordem e para na etapa pedida por `--emit`, se houver. Sem
+// pink-nav: start
+// pink-resume: O pipeline: reconhece a entrada pelo cabeçalho, avança etapa por etapa, grava a pedida ou executa.
+// pink-keywords: pipeline, etapa, entrada, cabeçalho, tokens, ast, semantic, executar, verificador
+/// O que o pipeline tem em mãos depois de cada etapa.
+enum Data {
+    Source,
+    Tokens(Vec<token::Token>),
+    Ast(ast::Program),
+    Semantic(checked::CheckedProgram),
+}
+
+/// Roda as etapas a partir da entrada e para na pedida por `--emit`, se houver. Sem
 /// `--emit`, executa o programa.
 fn run(options: &Options) -> Result<(), Failure> {
     let path = &options.input;
-    let output = options.output.as_deref();
-    let source = fs::read_to_string(path)
+    let content = fs::read_to_string(path)
         .map_err(|e| format!("pinker: não foi possível ler '{}': {e}", path.display()))?;
+    let malformed = |e: FormatError| {
+        format!(
+            "{}:{}: erro de formato: {}",
+            path.display(),
+            e.line,
+            e.message
+        )
+    };
 
-    let tokens = lexer::tokenize(&source).map_err(|e| report(path, "erro", e))?;
-    if let Some(stage @ Stage::Tokens) = &options.emit {
-        return Ok(write_output(path, stage, output, &token::render(&tokens))?);
+    // Um arquivo de etapa diz no cabeçalho de que código-fonte veio; os diagnósticos da
+    // linguagem apontam para ele.
+    let (start, source) = match artifact::detect(&content).map_err(malformed)? {
+        Some((format, source)) => (Some(format), source),
+        None => (None, path.display().to_string()),
+    };
+    if let (Some(start), Some(emit)) = (start, options.emit)
+        && emit <= start
+    {
+        return Err(Failure {
+            message: format!(
+                "pinker: a entrada já é um arquivo da etapa {}; --emit precisa de uma etapa posterior",
+                start.name()
+            ),
+            code: 2,
+        });
     }
+    let failed = |e: Diagnostic| report(&source, "erro", e);
+    let mut data = match start {
+        None => Data::Source,
+        Some(Format::Tokens) => Data::Tokens(token::read(&content).map_err(malformed)?),
+        Some(Format::Ast) => Data::Ast(ast::read(&content).map_err(malformed)?),
+        Some(Format::Semantic) => {
+            let program = checked::read(&content).map_err(malformed)?;
+            // Depois do .s nada mais confere o programa: o verificador garante que a
+            // árvore respeita o que o interpretador supõe.
+            verifier::verify(&program).map_err(failed)?;
+            Data::Semantic(program)
+        }
+    };
 
-    let program = parser::parse(&tokens).map_err(|e| report(path, "erro", e))?;
-    if let Some(stage @ Stage::Ast) = &options.emit {
-        return Ok(write_output(path, stage, output, &ast::render(&program))?);
+    let output = options.output.as_deref();
+    let emit = |format: Format, content: String| -> Result<(), Failure> {
+        Ok(write_output(path, format, output, &content)?)
+    };
+    loop {
+        data = match data {
+            Data::Source => Data::Tokens(lexer::tokenize(&content).map_err(failed)?),
+            Data::Tokens(tokens) => {
+                if options.emit == Some(Format::Tokens) {
+                    return emit(Format::Tokens, token::render(&tokens, &source));
+                }
+                Data::Ast(parser::parse(&tokens).map_err(failed)?)
+            }
+            Data::Ast(program) => {
+                if options.emit == Some(Format::Ast) {
+                    return emit(Format::Ast, ast::render(&program, &source));
+                }
+                Data::Semantic(semantic::check(&program).map_err(failed)?)
+            }
+            Data::Semantic(program) => {
+                if options.emit == Some(Format::Semantic) {
+                    return emit(Format::Semantic, checked::render(&program, &source));
+                }
+                return execute(&program, &source);
+            }
+        };
     }
+}
 
-    let checked = semantic::check(&program).map_err(|e| report(path, "erro", e))?;
-    if let Some(stage @ Stage::Semantic) = &options.emit {
-        return Ok(write_output(
-            path,
-            stage,
-            output,
-            &checked::render(&checked),
-        )?);
-    }
-
+fn execute(program: &checked::CheckedProgram, source: &str) -> Result<(), Failure> {
     let mut stdout = BufWriter::new(io::stdout().lock());
-    let result = interpreter::run(&checked, &mut stdout);
+    let result = interpreter::run(program, &mut stdout);
     // A saída escrita antes de uma falha aparece antes do diagnóstico.
     let _ = stdout.flush();
     result.map_err(|e| Failure {
-        message: report(path, "erro de execução", e),
+        message: report(source, "erro de execução", e),
         code: 3,
     })
 }
 
-/// Formata um diagnóstico como `arquivo:linha:coluna: <tipo>: mensagem`.
-fn report(path: &Path, kind: &str, diagnostic: Diagnostic) -> String {
+/// Formata um diagnóstico como `fonte:linha:coluna: <tipo>: mensagem`.
+fn report(source: &str, kind: &str, diagnostic: Diagnostic) -> String {
     format!(
-        "{}:{}:{}: {kind}: {}",
-        path.display(),
-        diagnostic.position.line,
-        diagnostic.position.column,
-        diagnostic.message
+        "{source}:{}:{}: {kind}: {}",
+        diagnostic.position.line, diagnostic.position.column, diagnostic.message
     )
 }
+// pink-nav: end
 
+// pink-nav: start
+// pink-resume: Grava o resultado de uma etapa, recusando sobrescrever o próprio arquivo de entrada.
+// pink-keywords: gravar arquivo, saída, -o, proteção da entrada, symlink, hard link
 fn write_output(
     input: &Path,
-    stage: &Stage,
+    format: Format,
     output: Option<&str>,
     content: &str,
 ) -> Result<(), String> {
@@ -209,7 +252,7 @@ fn write_output(
     }
     let target = match output {
         Some(path) => PathBuf::from(path),
-        None => input.with_extension(stage.extension()),
+        None => input.with_extension(format.extension()),
     };
     if same_file(input, &target) {
         return Err(format!(
@@ -225,7 +268,7 @@ fn write_output(
     })?;
     eprintln!(
         "pinker: etapa '{}' gravada em '{}'",
-        stage.extension(),
+        format.name(),
         target.display()
     );
     Ok(())

@@ -12,6 +12,7 @@ use crate::ast::{self, BinaryOperator, ElseBranch, ExpressionKind, StatementKind
 use crate::checked::{
     Callee, CheckedBlock, CheckedCall, CheckedExpression, CheckedExpressionKind, CheckedFunction,
     CheckedProgram, CheckedStatement, CheckedStatementKind, IntType, Type, Variable, arithmetic,
+    block_terminates,
 };
 use crate::diagnostic::{Diagnostic, error};
 use crate::token::Position;
@@ -712,8 +713,8 @@ impl FunctionChecker<'_> {
 }
 
 // pink-nav: start
-// pink-resume: Auxiliares sem estado: literais, constantes, aritmética exata, tipos de operandos e fluxo de retorno.
-// pink-keywords: literal, constante, aritmética, operando, fluxo, give, break, auxiliar
+// pink-resume: Auxiliares sem estado: literais, constantes, tipos de operandos e argumentos.
+// pink-keywords: literal, constante, operando, argumento, auxiliar
 fn integer_type(expected: Option<Type>) -> IntType {
     match expected {
         Some(Type::Int(int)) => int,
@@ -916,39 +917,4 @@ fn binary(
     }
 }
 
-/// Verdadeiro quando o bloco nunca chega ao fim: em todos os caminhos, ele devolve um
-/// valor ou fica preso num `loop` sem `break` que saia dele. Não chegar ao fim não é o
-/// mesmo que devolver: `loop` com só `continue` nunca devolve, mas também nunca termina.
-fn block_terminates(block: &CheckedBlock) -> bool {
-    block
-        .statements
-        .iter()
-        .any(|statement| match &statement.kind {
-            CheckedStatementKind::Give { .. } => true,
-            CheckedStatementKind::If {
-                then_block,
-                else_block: Some(else_block),
-                ..
-            } => block_terminates(then_block) && block_terminates(else_block),
-            CheckedStatementKind::Loop { body } => !breaks_out(body),
-            _ => false,
-        })
-}
-
-/// Verdadeiro quando o bloco tem um `break` que sai do laço que o contém (um `break`
-/// dentro de um laço interno pertence a esse laço).
-fn breaks_out(block: &CheckedBlock) -> bool {
-    block
-        .statements
-        .iter()
-        .any(|statement| match &statement.kind {
-            CheckedStatementKind::Break => true,
-            CheckedStatementKind::If {
-                then_block,
-                else_block,
-                ..
-            } => breaks_out(then_block) || else_block.as_ref().is_some_and(breaks_out),
-            _ => false,
-        })
-}
 // pink-nav: end

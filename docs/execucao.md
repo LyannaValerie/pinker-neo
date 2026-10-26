@@ -115,5 +115,8 @@ Nos três casos, a falha nunca vira corrupção silenciosa nem sucesso falso.
 ## Linha de comando
 
 - `pinker <arquivo.pk>` passa por todas as etapas e executa o programa.
+- `pinker <arquivo.s>` executa uma árvore verificada gravada antes, depois de conferi-la
+  com o verificador (ver [`arquivos.md`](arquivos.md)). Também é possível partir de um
+  `.t` ou de um `.a`: o pipeline começa na etapa seguinte à do arquivo.
 - Com `--emit=<etapa>`, o pipeline para na etapa pedida e grava o resultado dela, sem
   executar. Assim, a observação das etapas anteriores continua independente da execução.
