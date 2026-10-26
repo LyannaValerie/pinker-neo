@@ -20,13 +20,38 @@ A Pinker é a base de um projeto maior, construído em camadas:
 
 ## Linguagens de implementação
 
-Cada linguagem tem um papel central. Nem todas serão necessárias em toda tarefa: usa-se
-a que se sai melhor naquilo.
+Cada linguagem tem um papel central, definido por responsabilidade: usa-se cada uma
+onde ela se sai melhor. Nem todas serão necessárias em toda tarefa.
 
-- **Rust:** o código principal da Pinker.
-- **C:** os assuntos de baixo nível.
-- **Python:** a parte operacional, mecânica e de ferramentas.
-- **Bash:** cola entre as partes (scripts curtos de build e de setup).
+- **Rust:** estrutura, frontend, representações e integrações.
+- **C:** baixo nível, ABI, interfaces de máquina e pontos próximos do hardware.
+- **Python:** ferramentas, geração, automação e trabalho auxiliar.
+- **Bash:** cola entre as partes (scripts curtos de build e de setup). Terá uma
+  importância muito alta mais adiante.
+
+Exceções a essa divisão precisam ser especificadas.
+
+### Sem dependências externas
+
+Nenhuma das linguagens usa dependências ou bibliotecas externas. Externa é qualquer
+biblioteca que não venha na instalação padrão da linguagem. As bibliotecas padrão (a
+`std` do Rust, a libc do C, a biblioteca padrão do Python) são permitidas.
+
+### Combinação entre linguagens
+
+As linguagens não ficam isoladas artificialmente: os papéis se combinam quando há
+razão técnica para isso.
+
+### Fronteira Rust/C
+
+Na fronteira entre Rust e C, estes pontos são contratos explícitos:
+
+- **Layout** dos dados.
+- **Alinhamento.**
+- **Ownership:** quem aloca e quem libera cada recurso.
+- **Ponteiros:** validade, nulidade e tempo de vida.
+- **Erros:** como cada lado sinaliza uma falha.
+- **Unwinding:** o que acontece quando um panic ou erro chega à fronteira.
 
 ## Educação: um pipeline transparente
 
@@ -108,7 +133,6 @@ seção e a identificação numérica.
 
 ## Em aberto
 
-- Quais componentes ficam em C (por exemplo, o computador emulado ou o runtime).
 - As etapas do pipeline e o formato do que cada uma produz.
 - Os nomes das etapas aceitos por `--emit`.
 - Como o "computador" será construído: emulador em software, hardware descrito em
