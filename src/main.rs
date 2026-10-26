@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{env, fs};
 
-use pinker::{lexer, token};
+use pinker::diagnostic::Diagnostic;
+use pinker::{ast, lexer, parser, token};
 
 const USAGE: &str = "uso: pinker <arquivo.pk> [--emit=<etapa>] [-o <saída>]
 
   --emit=<etapa>  grava o resultado de uma etapa do pipeline
-                  etapas disponíveis: tokens
+                  etapas disponíveis: tokens, ast
   -o <saída>      caminho do arquivo gravado (padrão: o arquivo de entrada com a
                   extensão da etapa, como ola.tokens); '-' escreve na saída padrão
   -h, --help      mostra esta ajuda
@@ -21,12 +22,14 @@ Sem --emit, o arquivo passa pelas etapas disponíveis e só os erros são mostra
 // pink-keywords: cli, argumentos, opções, emit, etapa, saída, -o
 enum Stage {
     Tokens,
+    Ast,
 }
 
 impl Stage {
     fn from_name(name: &str) -> Option<Stage> {
         match name {
             "tokens" => Some(Stage::Tokens),
+            "ast" => Some(Stage::Ast),
             _ => None,
         }
     }
@@ -34,6 +37,7 @@ impl Stage {
     fn extension(&self) -> &'static str {
         match self {
             Stage::Tokens => "tokens",
+            Stage::Ast => "ast",
         }
     }
 }
@@ -55,7 +59,7 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
             return Ok(None);
         } else if let Some(name) = arg.strip_prefix("--emit=") {
             let stage = Stage::from_name(name).ok_or_else(|| {
-                format!("etapa desconhecida '{name}'; etapas disponíveis: tokens")
+                format!("etapa desconhecida '{name}'; etapas disponíveis: tokens, ast")
             })?;
             emit = Some(stage);
         } else if arg == "-o" {
@@ -82,7 +86,7 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Ponto de entrada: lê o arquivo, roda o lexer, mostra erros e grava a etapa pedida.
+// pink-resume: Ponto de entrada: lê o arquivo, roda as etapas até a pedida, mostra erros e grava o resultado.
 // pink-keywords: main, execução, erro, código de saída, gravar arquivo
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -106,32 +110,39 @@ fn main() -> ExitCode {
     }
 }
 
+/// Roda as etapas em ordem e para na etapa pedida por `--emit`, se houver.
 fn run(options: &Options) -> Result<(), String> {
     let path = &options.input;
+    let output = options.output.as_deref();
     let source = fs::read_to_string(path)
         .map_err(|e| format!("pinker: não foi possível ler '{}': {e}", path.display()))?;
 
-    let tokens = lexer::tokenize(&source).map_err(|e| {
-        format!(
-            "{}:{}:{}: erro: {}",
-            path.display(),
-            e.position.line,
-            e.position.column,
-            e.message
-        )
-    })?;
+    let tokens = lexer::tokenize(&source).map_err(|e| report(path, e))?;
+    if let Some(stage @ Stage::Tokens) = &options.emit {
+        return write_output(path, stage, output, &token::render(&tokens));
+    }
 
-    let Some(stage) = &options.emit else {
-        eprintln!(
-            "pinker: '{}' passou pelo lexer sem erros (a execução ainda não existe)",
-            path.display()
-        );
-        return Ok(());
-    };
-    let content = match stage {
-        Stage::Tokens => token::render(&tokens),
-    };
-    write_output(path, stage, options.output.as_deref(), &content)
+    let program = parser::parse(&tokens).map_err(|e| report(path, e))?;
+    if let Some(stage @ Stage::Ast) = &options.emit {
+        return write_output(path, stage, output, &ast::render(&program));
+    }
+
+    eprintln!(
+        "pinker: '{}' passou pelo lexer e pelo parser sem erros (a execução ainda não existe)",
+        path.display()
+    );
+    Ok(())
+}
+
+/// Formata um diagnóstico como `arquivo:linha:coluna: erro: mensagem`.
+fn report(path: &Path, diagnostic: Diagnostic) -> String {
+    format!(
+        "{}:{}:{}: erro: {}",
+        path.display(),
+        diagnostic.position.line,
+        diagnostic.position.column,
+        diagnostic.message
+    )
 }
 
 fn write_output(
@@ -155,7 +166,7 @@ fn write_output(
         )
     })?;
     eprintln!(
-        "pinker: {} gravados em '{}'",
+        "pinker: etapa '{}' gravada em '{}'",
         stage.extension(),
         target.display()
     );

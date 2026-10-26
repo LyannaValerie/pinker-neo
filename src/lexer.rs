@@ -4,30 +4,14 @@
 //! um bloco (parser), não interpreta `-` como negação (parser) e não converte inteiros
 //! para um tipo (análise semântica): os literais guardam a base e os dígitos.
 
+use crate::diagnostic::{Diagnostic, error};
 use crate::token::{Base, Keyword, Position, Symbol, Token, TokenKind};
-
-// pink-nav: start
-// pink-resume: Erro léxico: a mensagem e a posição onde o problema foi encontrado.
-// pink-keywords: erro, diagnóstico, posição
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LexError {
-    pub message: String,
-    pub position: Position,
-}
-
-fn error(message: impl Into<String>, position: Position) -> LexError {
-    LexError {
-        message: message.into(),
-        position,
-    }
-}
-// pink-nav: end
 
 // pink-nav: start
 // pink-resume: Estado do lexer e laço principal, que despacha cada caractere para a regra certa.
 // pink-keywords: tokenize, lexer, laço principal, fim de arquivo, estado
 /// Transforma o texto-fonte em tokens. Para no primeiro erro.
-pub fn tokenize(source: &str) -> Result<Vec<Token>, LexError> {
+pub fn tokenize(source: &str) -> Result<Vec<Token>, Diagnostic> {
     Lexer::new(source).run()
 }
 
@@ -59,7 +43,7 @@ impl Lexer {
         }
     }
 
-    fn run(mut self) -> Result<Vec<Token>, LexError> {
+    fn run(mut self) -> Result<Vec<Token>, Diagnostic> {
         loop {
             if self.at_line_start && self.delimiters.is_empty() {
                 self.indentation()?;
@@ -81,7 +65,7 @@ impl Lexer {
     }
 
     /// Fecha o arquivo: a última linha lógica e os blocos ainda abertos.
-    fn finish(mut self) -> Result<Vec<Token>, LexError> {
+    fn finish(mut self) -> Result<Vec<Token>, Diagnostic> {
         if let Some((open, position)) = self.delimiters.last() {
             return Err(error(
                 format!("'{open}' aberto aqui não foi fechado"),
@@ -105,7 +89,7 @@ impl Lexer {
     // pink-keywords: indentação, indent, dedent, quebra de linha, tabulação, linha em branco, crlf
     /// Mede a indentação de uma linha. Linhas vazias ou só com comentário não abrem nem
     /// fecham blocos: o laço principal as consome sem produzir tokens.
-    fn indentation(&mut self) -> Result<(), LexError> {
+    fn indentation(&mut self) -> Result<(), Diagnostic> {
         let mut width = 0;
         let mut tab = None;
         while let Some(c @ (' ' | '\t')) = self.peek() {
@@ -152,7 +136,7 @@ impl Lexer {
 
     /// Consome uma quebra de linha (`\n` ou `\r\n`). Fora de delimitadores, encerra a
     /// linha lógica; dentro deles, a linha continua.
-    fn newline(&mut self) -> Result<(), LexError> {
+    fn newline(&mut self) -> Result<(), Diagnostic> {
         let position = self.position();
         if self.advance() == Some('\r') {
             if self.peek() != Some('\n') {
@@ -183,7 +167,7 @@ impl Lexer {
     // pink-nav: start
     // pink-resume: Lê um texto entre aspas duplas e resolve os escapes \n, \t, \\ e \".
     // pink-keywords: texto, string, aspas, escape, texto não fechado
-    fn text(&mut self) -> Result<(), LexError> {
+    fn text(&mut self) -> Result<(), Diagnostic> {
         let start = self.position();
         let begin = self.index;
         let unterminated = || error("texto não fechado: falta a aspa final '\"'", start);
@@ -233,7 +217,7 @@ impl Lexer {
     // pink-resume: Lê um inteiro decimal, hexadecimal (0x) ou binário (0b), guardando base e dígitos sem converter.
     // Zeros à esquerda são decimais: `010` é dez, nunca octal.
     // pink-keywords: número, inteiro, literal, hexadecimal, binário, prefixo, dígito inválido
-    fn number(&mut self) -> Result<(), LexError> {
+    fn number(&mut self) -> Result<(), Diagnostic> {
         let start = self.position();
         let begin = self.index;
         let base = match (self.peek(), self.peek_next()) {
@@ -309,7 +293,7 @@ impl Lexer {
         self.push(kind, start, lexeme);
     }
 
-    fn symbol(&mut self) -> Result<(), LexError> {
+    fn symbol(&mut self) -> Result<(), Diagnostic> {
         let start = self.position();
         let first = self
             .peek()
@@ -343,7 +327,7 @@ impl Lexer {
         Ok(())
     }
 
-    fn close(&mut self, closing: char, position: Position) -> Result<(), LexError> {
+    fn close(&mut self, closing: char, position: Position) -> Result<(), Diagnostic> {
         let expected = if closing == ')' { '(' } else { '[' };
         match self.delimiters.pop() {
             Some((open, _)) if open == expected => Ok(()),

@@ -103,6 +103,45 @@ implicitamente.
 - Um valor nunca dá a volta em silêncio.
 - O comportamento é o mesmo em debug e em release.
 
+## Divisão e resto
+
+| Situação | Comportamento |
+|---|---|
+| Divisor zero conhecido em avaliação constante | Erro de compilação |
+| Divisor zero determinado durante a execução | Falha definida em execução |
+| Divisão válida | Quociente truncado em direção a zero |
+| Resto válido | Zero ou com o mesmo sinal do dividendo |
+| Mínimo de um inteiro com sinal dividido por `-1` | Overflow (o quociente não cabe no tipo) |
+| Mínimo de um inteiro com sinal `%` `-1` | Zero |
+
+O resto do mínimo por `-1` é definido como zero, sem depender de uma instrução da
+máquina que poderia falhar ao calcular também o quociente.
+
+```text
+ 7 / 3   #  2
+-7 / 3   # -2
+-7 % 3   # -1
+ 7 % -3  #  1
+```
+
+## `main`, `say` e retornos
+
+- Um programa executável tem exatamente uma `main`, sem parâmetros e sem resultado:
+
+  ```text
+  fun main()
+      say("Olá")
+  ```
+
+- Quando `main` termina normalmente, o código de saída é zero. Uma falha definida de
+  execução termina com código diferente de zero.
+- Uma função com `-> T` não pode terminar por um caminho que não forneça o resultado.
+- `give valor` numa função sem resultado é erro semântico; `give` sem valor numa função
+  com resultado também.
+- `say` recebe um argumento do tipo `bool`, `text` ou qualquer tipo inteiro (incluindo os
+  de largura explícita), escreve uma representação definida dele e uma quebra de linha.
+  Formatação, vários argumentos e saída sem quebra de linha ficam para depois.
+
 ## Memória
 
 - Inteiros, `bool` e `text` se comportam como valores. O texto é imutável.
@@ -175,12 +214,18 @@ Pontos que o contrato não fixava e que o primeiro lexer decidiu. Podem ser revi
 - O próprio lexer aponta `(` ou `[` sem par e fechamentos trocados, como `([)]`, porque
   já mantém uma pilha dos delimitadores abertos para saber quando a linha continua.
 - Com erro, a CLI termina com código diferente de zero e não grava o arquivo da etapa.
+  Um arquivo de uma execução anterior bem-sucedida é preservado: quem automatiza a CLI
+  deve verificar o código de saída, não a existência do arquivo.
 
 ### `--emit=tokens`
 
 `pinker <arquivo.pk> --emit=tokens` grava os tokens em `<arquivo>.tokens`, ao lado da
 entrada. `-o <caminho>` escolhe outro destino, e `-o -` escreve na saída padrão. Sem
-`--emit`, o arquivo passa pelo lexer e só os erros são mostrados.
+`--emit`, o arquivo passa por todas as etapas disponíveis e só os erros são mostrados.
+Com `--emit`, as etapas rodam até a pedida: `--emit=tokens` funciona mesmo que o
+arquivo tenha erro de sintaxe.
+
+A gramática, o parser e `--emit=ast` estão em [`gramatica.md`](gramatica.md).
 
 ## Adiado
 

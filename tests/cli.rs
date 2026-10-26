@@ -83,9 +83,47 @@ fn erro_lexico_nao_grava_tokens() {
 #[test]
 fn etapa_desconhecida_e_erro_de_uso() {
     let input = source_file("etapa_desconhecida", "x\n");
-    let output = pinker().arg(&input).arg("--emit=ast").output().unwrap();
+    let output = pinker().arg(&input).arg("--emit=ir").output().unwrap();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("etapa desconhecida 'ast'"), "{stderr}");
+    assert!(stderr.contains("etapa desconhecida 'ir'"), "{stderr}");
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: --emit=ast grava a árvore; erro de sintaxe falha com posição; --emit=tokens não depende do parser.
+// pink-keywords: teste, cli, emit, ast, parser, erro de sintaxe
+#[test]
+fn emit_ast_grava_a_arvore() {
+    let input = source_file("emit_ast", "fun main()\n    say(1)\n");
+    let status = pinker().arg(&input).arg("--emit=ast").status().unwrap();
+    assert!(status.success());
+    let content = fs::read_to_string(input.with_extension("ast")).unwrap();
+    assert!(content.contains("1:1      Função main\n"), "{content}");
+    assert!(content.contains("2:5          Chamada say\n"), "{content}");
+}
+
+#[test]
+fn erro_de_sintaxe_mostra_arquivo_linha_e_coluna() {
+    let input = source_file("erro_sintaxe", "fun main()\n    a + b\n");
+    let output = pinker().arg(&input).arg("--emit=ast").output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("ola.pk:2:7: erro: esperava '=' ou '('"),
+        "{stderr}"
+    );
+    assert!(!input.with_extension("ast").exists());
+}
+
+#[test]
+fn emit_tokens_funciona_mesmo_com_erro_de_sintaxe() {
+    let input = source_file("tokens_sem_parser", "a + b\n");
+    let output = pinker()
+        .arg(&input)
+        .args(["--emit=tokens", "-o", "-"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
 }
 // pink-nav: end
