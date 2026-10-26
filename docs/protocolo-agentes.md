@@ -51,7 +51,8 @@ O diretório de uma tarefa guarda:
    cronograma no repositório, registre o pedido direto; não invente um roadmap.
 2. Observe o repositório: branch, HEAD e `git status`. Trabalho não commitado que já
    existia não é seu: preserve-o e registre-o no checkpoint.
-3. Crie `.tarefas/<id>/`, copie os dois modelos e preencha-os.
+3. Crie `.tarefas/<id>/evidencias/`, copie os dois modelos para `.tarefas/<id>/` e
+   preencha-os.
 
 ## Atualizar o checkpoint
 

@@ -12,9 +12,9 @@ seção de que a tarefa precisa.
 
 1. **Observe:** `git status -sb`, HEAD, trabalho não commitado e as tarefas em
    `.tarefas/`. O que já existia não é seu: preserve.
-2. **Tarefa:** crie `.tarefas/<id>/` a partir de `docs/modelos/task.json` e
-   `docs/modelos/checkpoint.md`, ou retome uma existente (protocolo, "Retomar ou
-   transferir").
+2. **Tarefa:** crie `.tarefas/<id>/evidencias/`, e o contrato e o checkpoint a partir de
+   `docs/modelos/task.json` e `docs/modelos/checkpoint.md`; ou retome uma tarefa existente
+   (protocolo, "Retomar ou transferir").
 3. **Escopo:** só o que a autorização cobre; o resto segue a tabela "Escopo" do protocolo.
 4. **Ferramentas:**
    - Navegação: ainda não há `pinker nav`. Confira com `cargo run -q -- --help`; se ele
@@ -41,16 +41,20 @@ seção de que a tarefa precisa.
 
 ```sh
 E=.tarefas/<id>/evidencias N=1   # N = número da rodada
+mkdir -p "$E"                    # antes de escrever "$E/prompt-revisao-$N.md"
 codex-velina exec -m gpt-5.6-terra -c 'model_reasoning_effort="high"' \
-  -s read-only --ephemeral -C /home/vicky/pinker --color never --json \
+  -s read-only --ephemeral -C /home/vicky/pinker --color never \
   -o "$E/revisao-$N.md" - < "$E/prompt-revisao-$N.md" \
-  > "$E/revisao-$N.jsonl" 2> "$E/revisao-$N.stderr"
+  > "$E/revisao-$N.stdout" 2> "$E/revisao-$N.stderr"
 echo $? > "$E/revisao-$N.codigo"
 ```
 
 - Antes e depois, grave `git status --short` e `git hash-object` dos arquivos do
   candidato, e confira que não mudaram.
-- Confira no `revisao-$N.jsonl` o modelo e o esforço que a sessão de fato usou.
+- O cabeçalho de `revisao-$N.stderr` mostra a configuração que o cliente resolveu:
+  confira `model: gpt-5.6-terra`, `sandbox: read-only` e `reasoning effort: high`, e
+  registre o `session id`. Isso não prova o que o servidor executou. Não use `--json`:
+  os eventos não trazem o modelo nem o esforço.
 - O relatório final do revisor fica em `revisao-$N.md`. O código diferente de 0, quota
   esgotada ou falta de login (`! codex-velina login`) deixam a revisão pendente. Não
   troque o revisor.
