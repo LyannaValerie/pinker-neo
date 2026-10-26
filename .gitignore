@@ -1,4 +1,6 @@
 /target
+# Estado local das tarefas dos agentes (docs/protocolo-agentes.md).
+/.tarefas/
 # Arquivos gerados pelas etapas do pipeline (pinker --emit).
 *.t
 *.a

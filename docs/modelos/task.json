@@ -1,0 +1,21 @@
+{
+  "id": "<AAAA-MM-DD-nome-curto>",
+  "autorizacao": "<onde e quando a Founder autorizou; uma referência, não a transcrição>",
+  "cronograma": {
+    "item": "<item do cronograma, ou null>",
+    "autorizacao_direta": false
+  },
+  "objetivo": "<o resultado esperado, em uma ou duas frases>",
+  "escopo": [
+    "<o que pode ser alterado ou feito>"
+  ],
+  "exclusoes": [
+    "<o que fica de fora, inclusive push, merge e release quando não autorizados>"
+  ],
+  "criterios_de_conclusao": [
+    "<um fato observável que mostra que a tarefa terminou>"
+  ],
+  "estado": "<em_andamento | aguardando_revisao | aguardando_founder | bloqueada | concluida>",
+  "executor_atual": "<quem está executando agora: ferramenta, modelo e sessão; null entre executores>",
+  "checkpoint": "checkpoint.md"
+}
