@@ -35,7 +35,9 @@ origem:
 - A versão é a do formato; esta versão do `pinker` lê a versão 1. Um arquivo de outra
   versão é recusado com uma mensagem clara.
 - A fonte é o `.pk` de onde o arquivo veio. Os diagnósticos da linguagem das etapas
-  seguintes apontam para ela.
+  seguintes apontam para ela. Ela é só uma origem declarada: como o resto do arquivo, pode
+  ser editada, e nada confere se o arquivo corresponde ao `.pk` atual. Se o `.pk` mudou
+  depois que o arquivo foi gerado, as posições dos diagnósticos podem não bater com ele.
 - Um arquivo que não começa com `# pinker ` é tratado como código-fonte Pinker. Por isso,
   um `.pk` não deve começar com um comentário `# pinker ...`.
 

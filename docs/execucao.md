@@ -75,6 +75,12 @@ São falhas definidas de execução:
 - A falha encerra o programa na hora, sem executar mais nada.
 - A saída que o programa já escreveu antes da falha é preservada e aparece antes do
   diagnóstico.
+- A saída passa por um buffer: um `say` pode ser aceito e a escrita só falhar quando o
+  buffer é descarregado. Por isso, ao fim de uma execução normal, a saída é descarregada,
+  e uma falha nesse momento é uma falha de execução, apontada na posição da `main`. O
+  programa nunca termina com sucesso sem ter entregado a saída.
+- Se o programa falhou e a saída escrita antes da falha também não pôde ser entregue, o
+  diagnóstico da falha é mantido, seguido de uma linha que informa a perda da saída.
 ## Limites desta implementação
 
 O interpretador é recursivo: cada chamada, bloco e expressão da Pinker usa pilha do

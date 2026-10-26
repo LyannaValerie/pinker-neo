@@ -219,13 +219,20 @@ fn run(options: &Options) -> Result<(), Failure> {
 
 fn execute(program: &checked::CheckedProgram, source: &str) -> Result<(), Failure> {
     let mut stdout = BufWriter::new(io::stdout().lock());
-    let result = interpreter::run(program, &mut stdout);
-    // A saída escrita antes de uma falha aparece antes do diagnóstico.
-    let _ = stdout.flush();
-    result.map_err(|e| Failure {
-        message: report(source, "erro de execução", e),
-        code: 3,
-    })
+    // Ao terminar normalmente, `run` já descarrega a saída e devolve a falha de escrita, se
+    // houver.
+    let Err(e) = interpreter::run(program, &mut stdout) else {
+        return Ok(());
+    };
+    // Numa falha, a saída escrita antes dela aparece antes do diagnóstico. Se nem isso for
+    // possível, o diagnóstico da falha é mantido e a perda da saída é informada junto.
+    let mut message = report(source, "erro de execução", e);
+    if let Err(e) = stdout.flush() {
+        message.push_str(&format!(
+            "\npinker: além disso, a saída escrita antes da falha se perdeu: {e}"
+        ));
+    }
+    Err(Failure { message, code: 3 })
 }
 
 /// Formata um diagnóstico como `fonte:linha:coluna: <tipo>: mensagem`.

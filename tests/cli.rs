@@ -251,6 +251,51 @@ fn falha_de_execucao_termina_com_codigo_3() {
     );
 }
 
+/// Executa com a saída padrão em `/dev/full`, onde toda escrita falha por falta de espaço.
+/// A saída fica no buffer durante os `say`; a falha só aparece ao descarregá-la.
+#[cfg(target_os = "linux")]
+fn run_with_full_stdout(name: &str, source: &str) -> (Option<i32>, String) {
+    let input = source_file(name, source);
+    let full = fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let output = pinker().arg(&input).stdout(full).output().unwrap();
+    (
+        output.status.code(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn saida_que_nao_chega_ao_destino_e_falha_de_execucao() {
+    let (code, stderr) = run_with_full_stdout("saida_cheia", "fun main()\n    say(1)\n");
+    assert_eq!(code, Some(3), "{stderr}");
+    assert!(
+        stderr.contains("ola.pk:1:1: erro de execução: não foi possível escrever a saída"),
+        "{stderr}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn falha_de_execucao_com_saida_perdida_mantem_o_diagnostico() {
+    let (code, stderr) = run_with_full_stdout(
+        "falha_e_saida_cheia",
+        "fun main()\n    say(1)\n    let z = 0\n    say(1 / z)\n",
+    );
+    assert_eq!(code, Some(3), "{stderr}");
+    assert!(
+        stderr.contains("ola.pk:4:11: erro de execução: divisão por zero"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("pinker: além disso, a saída escrita antes da falha se perdeu"),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn emit_nao_executa_o_programa() {
     let input = source_file("emit_sem_execucao", "fun main()\n    say(\"executou\")\n");

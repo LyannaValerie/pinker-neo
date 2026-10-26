@@ -1,5 +1,7 @@
 //! Testes do interpretador: saída de say, aritmética, falhas de execução, fluxo e ordem.
 
+use std::io::{self, Write};
+
 use pinker::diagnostic::Diagnostic;
 use pinker::interpreter::run;
 use pinker::lexer::tokenize;
@@ -312,4 +314,63 @@ fn limite_conta_so_as_chamadas_ativas() {
     assert_eq!(output(source), "30000\n");
 }
 
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Falhas da saída: escrita recusada falha no say; descarga recusada no fim falha mesmo sem erro do programa.
+// pink-keywords: teste, saída, escrita, flush, descarga, write, falha de escrita
+/// Uma saída que recusa a escrita (`write`) ou a descarga (`flush`).
+struct FailingOutput {
+    fails_on_write: bool,
+}
+
+impl Write for FailingOutput {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if self.fails_on_write {
+            return Err(io::Error::other("escrita recusada"));
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::other("descarga recusada"))
+    }
+}
+
+fn run_with(source: &str, mut output: FailingOutput) -> Diagnostic {
+    let checked = check(&parse(&tokenize(source).unwrap()).unwrap()).unwrap();
+    run(&checked, &mut output).expect_err("a execução deveria falhar")
+}
+
+#[test]
+fn escrita_recusada_falha_no_say() {
+    let e = run_with(
+        "fun main()\n    say(1)\n",
+        FailingOutput {
+            fails_on_write: true,
+        },
+    );
+    assert_eq!(
+        e.message,
+        "não foi possível escrever a saída: escrita recusada"
+    );
+    assert_eq!((e.position.line, e.position.column), (2, 5));
+}
+
+#[test]
+fn descarga_recusada_no_fim_e_falha_de_execucao() {
+    // Cada say é aceito, mas a saída não chega ao destino: a execução não pode terminar
+    // com sucesso.
+    let e = run_with(
+        "fun main()\n    say(1)\n    say(2)\n",
+        FailingOutput {
+            fails_on_write: false,
+        },
+    );
+    assert_eq!(
+        e.message,
+        "não foi possível escrever a saída: descarga recusada"
+    );
+    assert_eq!((e.position.line, e.position.column), (1, 1));
+}
 // pink-nav: end
