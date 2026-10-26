@@ -1,0 +1,4 @@
+# Ignora tudo o que for criado aqui, exceto este arquivo e o README.
+*
+!.gitignore
+!README.md
