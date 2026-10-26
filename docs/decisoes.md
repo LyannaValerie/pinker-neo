@@ -54,9 +54,10 @@ arquivos `.pk`, as âncoras de navegação usam essa sintaxe: `# pink-nav: start
 - **Inteiro padrão:** sem contexto, um literal inteiro tem o tipo `int`. Com contexto,
   como uma anotação, ele assume o tipo pedido, se o valor couber nele; fora da faixa, é
   erro.
-- **`int`:** *proposta:* apelido de `i64`. É uma decisão nova: na v0, o `bombom` era um
-  inteiro de 64 bits sem sinal, compatível com `u64`. Um inteiro padrão com sinal permite
-  escrever valores negativos, diferenças e contadores decrescentes.
+- **`int`:** apelido de `i64`, com o mesmo tipo, a mesma faixa e as mesmas operações;
+  não é um tipo nominal separado. É uma mudança deliberada em relação à v0, em que o
+  `bombom` era um inteiro de 64 bits sem sinal, compatível com `u64`. Um inteiro padrão
+  com sinal permite escrever valores negativos, diferenças e contadores decrescentes.
 - **`bool`** e **`text`**.
 
 ```text
@@ -127,19 +128,74 @@ say(first)   # Pinker
 say(second)  # Outra
 ```
 
+## Lexer
+
+### Fronteiras
+
+| Responsabilidade | Camada |
+|---|---|
+| Reconhecer palavras, identificadores, números, textos e comentários | Lexer |
+| Produzir quebras lógicas, `INDENT` e `DEDENT` | Lexer |
+| Verificar se uma construção permite abrir bloco | Parser |
+| Interpretar `-` como negação | Parser |
+| Resolver o tipo e verificar a faixa do inteiro | Análise semântica |
+| Gerenciar o armazenamento e a contagem de referências dos textos | Runtime |
+
+- O lexer não converte números: guarda a base e os dígitos, para que a análise
+  semântica aceite o mínimo de `i64` e toda a faixa de `u64`.
+- Tipos (`int`, `i32`, `text`) e intrínsecas (`say`, `morph`) são identificadores.
+  O significado deles é resolvido nas etapas seguintes.
+
+### Critério de conclusão
+
+O primeiro lexer está concluído quando produz tokens com localização correta e
+diagnósticos verificáveis para entradas válidas e inválidas, incluindo indentação,
+continuação entre delimitadores, comentários, escapes e fim de arquivo. Ele não
+antecipa o parser, os empréstimos nem as funcionalidades adiadas.
+
+### Escolhas de implementação
+
+Pontos que o contrato não fixava e que o primeiro lexer decidiu. Podem ser revistos.
+
+- O lexer para no primeiro erro.
+- A coluna conta caracteres, não bytes.
+- Identificadores seguem `[A-Za-z_][A-Za-z0-9_]*` e diferenciam maiúsculas de
+  minúsculas. Textos e comentários aceitam Unicode.
+- Tabulação fora da indentação conta como espaço. Linhas vazias ou só com comentário
+  são ignoradas na indentação, mesmo que tenham tabulação.
+- Quebras de linha `\n` e `\r\n` são aceitas; `\r` isolado é erro.
+- Um texto não pode atravessar linhas.
+- Os prefixos aceitam as duas caixas (`0x`/`0X`, `0b`/`0B`), e os dígitos hexadecimais
+  também (`a–f`, `A–F`). Outro prefixo, como `0o`, é erro.
+- Zeros à esquerda são aceitos e sempre decimais: `010` é dez, nunca octal.
+- Um literal malformado (`0x`, `0b102`, `123abc`) é erro; nunca é dividido em tokens
+  que escondam o problema.
+- `1.5` é erro: números com parte fracionária ainda não existem.
+- `!` sozinho é erro, com a sugestão de usar `not`.
+- O próprio lexer aponta `(` ou `[` sem par e fechamentos trocados, como `([)]`, porque
+  já mantém uma pilha dos delimitadores abertos para saber quando a linha continua.
+- Com erro, a CLI termina com código diferente de zero e não grava o arquivo da etapa.
+
+### `--emit=tokens`
+
+`pinker <arquivo.pk> --emit=tokens` grava os tokens em `<arquivo>.tokens`, ao lado da
+entrada. `-o <caminho>` escolhe outro destino, e `-o -` escreve na saída padrão. Sem
+`--emit`, o arquivo passa pelo lexer e só os erros são mostrados.
+
 ## Adiado
 
 - **`union`:** até haver uma necessidade que `enum` não atenda. Uniões cruas, para
-  interfaces C, exigirão contrato próprio de layout, alinhamento e validade.
-- **`propagate`:** por enquanto, `give Result.Err(...)` já expressa o mesmo.
+  interfaces C, exigirão contrato próprio de layout, alinhamento e validade. Não é
+  palavra reservada, e a grafia não está garantida.
+- **`propagate`:** por enquanto, `give Result.Err(...)` já expressa o mesmo. Não é
+  palavra reservada, e a grafia não está garantida.
 - **Genéricos em expressões.**
 - **`unsafe`** (proposto): antes de ponteiros crus e assembly, será preciso definir
   quais operações o exigem, quais verificações continuam valendo dentro dele, como uma
   abstração impede o uso incorreto dos seus detalhes inseguros e quais garantias o
   código seguro recebe. Alocar um objeto gerenciado não precisa de `unsafe`.
 
-## Pendências
+## Organização do código
 
-- Confirmar `int` como apelido de `i64`.
-- Decidir se `union` e `propagate` ficam reservadas desde já, com um diagnóstico de
-  "reservada para uso futuro".
+Um único pacote Cargo, com o `Cargo.toml` na raiz e o Rust em `src/`. Workspaces ou
+crates adicionais só quando surgir uma necessidade concreta.

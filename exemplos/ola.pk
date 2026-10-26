@@ -1,0 +1,10 @@
+# Primeiro programa em Pinker: por enquanto, só o lexer o entende.
+
+fun soma(a: int, b: int) -> int
+    give a + b
+
+fun main() -> int
+    let total = soma(2, 0x03)
+    if total > 4 and not (total > 100)
+        say("maior que quatro\n")
+    give 0
