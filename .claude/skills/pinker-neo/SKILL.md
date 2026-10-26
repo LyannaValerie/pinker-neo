@@ -42,10 +42,11 @@ seção de que a tarefa precisa.
 ## Revisor
 
 ```sh
-E=.tarefas/<id>/evidencias N=1   # N = número da rodada
-mkdir -p "$E"                    # antes de escrever "$E/prompt-revisao-$N.md"
+R=$(git rev-parse --show-toplevel)  # confira: é o diretório de trabalho do checkpoint
+E="$R/.tarefas/<id>/evidencias" N=1  # N = número da rodada
+mkdir -p "$E"                        # antes de escrever "$E/prompt-revisao-$N.md"
 codex-velina exec -m gpt-5.6-terra -c 'model_reasoning_effort="high"' \
-  -s read-only --ephemeral -C /home/vicky/pinker --color never \
+  -s read-only --ephemeral -C "$R" --color never \
   -o "$E/revisao-$N.md" - < "$E/prompt-revisao-$N.md" \
   > "$E/revisao-$N.stdout" 2> "$E/revisao-$N.stderr"
 echo $? > "$E/revisao-$N.codigo"

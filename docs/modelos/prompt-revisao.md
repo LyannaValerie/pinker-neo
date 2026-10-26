@@ -4,7 +4,7 @@ Copie para `.tarefas/<id>/evidencias/prompt-revisao-<N>.md`, substitua cada `<..
 apague a seção que não se aplica. Não escreva a conclusão esperada nem peça aprovação.
 
 ```text
-Você é o revisor adversarial de uma entrega da Pinker Neo, em /home/vicky/pinker.
+Você é o revisor adversarial de uma entrega da Pinker Neo, em <raiz verificada da tarefa>.
 
 Regras:
 - Só leitura: não crie, edite, mova nem apague arquivos; não faça commit nem publique
