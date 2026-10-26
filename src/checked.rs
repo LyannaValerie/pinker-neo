@@ -5,13 +5,14 @@
 //! entrada do futuro interpretador.
 
 use std::fmt;
+use std::rc::Rc;
 
 use crate::ast::{BinaryOperator, UnaryOperator};
 use crate::token::Position;
 
 // pink-nav: start
-// pink-resume: Tipos da primeira versão: inteiros de largura explícita, bool e text, com faixas e nomes.
-// pink-keywords: tipo, inteiro, i64, u8, faixa, mínimo, máximo, bool, text, int
+// pink-resume: Tipos da primeira versão (inteiros de largura explícita, bool e text, com faixas e nomes) e a aritmética exata.
+// pink-keywords: tipo, inteiro, i64, u8, faixa, mínimo, máximo, bool, text, int, aritmética
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntType {
     I8,
@@ -72,6 +73,19 @@ impl IntType {
 
     pub fn contains(self, value: i128) -> bool {
         (self.min()..=self.max()).contains(&value)
+    }
+}
+
+/// Aritmética exata em i128, com divisão truncada em direção a zero e resto com o sinal
+/// do dividendo. `None` para divisão por zero ou resultado fora até de i128.
+pub fn arithmetic(operator: BinaryOperator, a: i128, b: i128) -> Option<i128> {
+    match operator {
+        BinaryOperator::Add => a.checked_add(b),
+        BinaryOperator::Subtract => a.checked_sub(b),
+        BinaryOperator::Multiply => a.checked_mul(b),
+        BinaryOperator::Divide => a.checked_div(b),
+        BinaryOperator::Remainder => a.checked_rem(b),
+        _ => None,
     }
 }
 
@@ -220,7 +234,9 @@ pub enum CheckedExpressionKind {
     /// Valor já dentro da faixa do tipo; `-` aplicado direto a um literal entra no valor.
     Integer(i128),
     Bool(bool),
-    Text(String),
+    /// Literais de texto: o armazenamento é criado uma vez e compartilhado por todos os
+    /// valores que vêm dele.
+    Text(Rc<str>),
     /// Índice da variável em `CheckedFunction::variables`.
     Variable(usize),
     Call(CheckedCall),

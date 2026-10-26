@@ -214,3 +214,69 @@ fn erro_semantico_falha_mas_ast_e_tokens_continuam_visiveis() {
     }
 }
 // pink-nav: end
+
+// pink-nav: start
+// pink-resume: Execução pela CLI: saída e código 0, falha de execução com código 3, --emit não executa, limite de recursão.
+// pink-keywords: teste, cli, execução, código de saída, falha de execução, recursão, limite
+#[test]
+fn executa_o_programa_sem_emit() {
+    let input = source_file("executa", "fun main()\n    say(\"olá\")\n    say(1 + 2)\n");
+    let output = pinker().arg(&input).output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "olá\n3\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn falha_de_execucao_termina_com_codigo_3() {
+    let input = source_file(
+        "falha_execucao",
+        "fun main()\n    say(1)\n    let z = 0\n    say(1 / z)\n",
+    );
+    let output = pinker().arg(&input).output().unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("ola.pk:4:11: erro de execução: divisão por zero"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn emit_nao_executa_o_programa() {
+    let input = source_file("emit_sem_execucao", "fun main()\n    say(\"executou\")\n");
+    for stage in ["tokens", "ast", "semantic"] {
+        let output = pinker()
+            .arg(&input)
+            .arg(format!("--emit={stage}"))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{stage}");
+        assert!(output.stdout.is_empty(), "{stage}");
+    }
+}
+
+#[test]
+fn recursao_profunda_ate_o_limite_e_alem_dele() {
+    let program = |depth: usize| {
+        format!(
+            "fun desce(n: int) -> int\n    if n == 0\n        give 0\n    give 1 + desce(n - 1)\n\nfun main()\n    say(desce({depth}))\n"
+        )
+    };
+    // A main conta como uma chamada: 9999 chamadas de desce completam o limite de 10000.
+    let input = source_file("recursao_no_limite", &program(9998));
+    let output = pinker().arg(&input).output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "9998\n");
+
+    let input = source_file("recursao_alem_do_limite", &program(100_000));
+    let output = pinker().arg(&input).output().unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("limite de 10000 chamadas aninhadas excedido"),
+        "{stderr}"
+    );
+}
+// pink-nav: end

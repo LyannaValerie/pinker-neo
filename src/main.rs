@@ -1,11 +1,12 @@
 //! `pinker`: a linha de comando do compilador.
 
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::{env, fs};
+use std::{env, fs, thread};
 
 use pinker::diagnostic::Diagnostic;
-use pinker::{ast, checked, lexer, parser, semantic, token};
+use pinker::{ast, checked, interpreter, lexer, parser, semantic, token};
 
 const USAGE: &str = "uso: pinker <arquivo.pk> [--emit=<etapa>] [-o <saída>]
 
@@ -15,7 +16,10 @@ const USAGE: &str = "uso: pinker <arquivo.pk> [--emit=<etapa>] [-o <saída>]
                   extensão da etapa, como ola.tokens); '-' escreve na saída padrão
   -h, --help      mostra esta ajuda
 
-Sem --emit, o arquivo passa pelas etapas disponíveis e só os erros são mostrados.";
+Sem --emit, o programa passa por todas as etapas e é executado.
+
+Códigos de saída: 0 sucesso, 1 erro de compilação ou de arquivo, 2 uso incorreto,
+3 falha de execução.";
 
 // pink-nav: start
 // pink-resume: Opções da linha de comando e as etapas do pipeline que --emit pode gravar.
@@ -89,63 +93,103 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Ponto de entrada: lê o arquivo, roda as etapas até a pedida, mostra erros e grava o resultado.
-// pink-keywords: main, execução, erro, código de saída, gravar arquivo, proteção da entrada
+// pink-resume: Ponto de entrada: lê o arquivo, roda as etapas até a pedida, executa o programa e define o código de saída.
+// pink-keywords: main, execução, erro, código de saída, gravar arquivo, proteção da entrada, pilha
+/// Pilha da thread que roda o pipeline. O interpretador é recursivo, e esta pilha foi
+/// validada nos cenários testados (até `MAX_CALL_DEPTH` chamadas aninhadas, em debug e
+/// release); não é uma garantia geral contra estouro.
+const STACK_SIZE: usize = 256 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    let thread = match thread::Builder::new().stack_size(STACK_SIZE).spawn(pinker) {
+        Ok(thread) => thread,
+        Err(e) => {
+            eprintln!("pinker: não foi possível criar a thread de execução: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Se a thread terminar em pânico (um defeito do próprio pinker), a mensagem do pânico
+    // já foi escrita; o código 101 é o mesmo que o Rust usa nesse caso.
+    ExitCode::from(thread.join().unwrap_or(101))
+}
+
+fn pinker() -> u8 {
     let args: Vec<String> = env::args().skip(1).collect();
     let options = match parse_args(&args) {
         Ok(Some(options)) => options,
         Ok(None) => {
             println!("{USAGE}");
-            return ExitCode::SUCCESS;
+            return 0;
         }
         Err(message) => {
             eprintln!("pinker: {message}\n\n{USAGE}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
     match run(&options) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            eprintln!("{message}");
-            ExitCode::FAILURE
+        Ok(()) => 0,
+        Err(failure) => {
+            eprintln!("{}", failure.message);
+            failure.code
         }
     }
 }
 
-/// Roda as etapas em ordem e para na etapa pedida por `--emit`, se houver.
-fn run(options: &Options) -> Result<(), String> {
+/// Uma falha com a mensagem e o código de saída correspondente.
+struct Failure {
+    message: String,
+    code: u8,
+}
+
+/// Erros de compilação e de arquivos terminam com código 1.
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Failure { message, code: 1 }
+    }
+}
+
+/// Roda as etapas em ordem e para na etapa pedida por `--emit`, se houver. Sem
+/// `--emit`, executa o programa.
+fn run(options: &Options) -> Result<(), Failure> {
     let path = &options.input;
     let output = options.output.as_deref();
     let source = fs::read_to_string(path)
         .map_err(|e| format!("pinker: não foi possível ler '{}': {e}", path.display()))?;
 
-    let tokens = lexer::tokenize(&source).map_err(|e| report(path, e))?;
+    let tokens = lexer::tokenize(&source).map_err(|e| report(path, "erro", e))?;
     if let Some(stage @ Stage::Tokens) = &options.emit {
-        return write_output(path, stage, output, &token::render(&tokens));
+        return Ok(write_output(path, stage, output, &token::render(&tokens))?);
     }
 
-    let program = parser::parse(&tokens).map_err(|e| report(path, e))?;
+    let program = parser::parse(&tokens).map_err(|e| report(path, "erro", e))?;
     if let Some(stage @ Stage::Ast) = &options.emit {
-        return write_output(path, stage, output, &ast::render(&program));
+        return Ok(write_output(path, stage, output, &ast::render(&program))?);
     }
 
-    let checked = semantic::check(&program).map_err(|e| report(path, e))?;
+    let checked = semantic::check(&program).map_err(|e| report(path, "erro", e))?;
     if let Some(stage @ Stage::Semantic) = &options.emit {
-        return write_output(path, stage, output, &checked::render(&checked));
+        return Ok(write_output(
+            path,
+            stage,
+            output,
+            &checked::render(&checked),
+        )?);
     }
 
-    eprintln!(
-        "pinker: '{}' passou pelo lexer, pelo parser e pela análise semântica sem erros (a execução ainda não existe)",
-        path.display()
-    );
-    Ok(())
+    let mut stdout = BufWriter::new(io::stdout().lock());
+    let result = interpreter::run(&checked, &mut stdout);
+    // A saída escrita antes de uma falha aparece antes do diagnóstico.
+    let _ = stdout.flush();
+    result.map_err(|e| Failure {
+        message: report(path, "erro de execução", e),
+        code: 3,
+    })
 }
 
-/// Formata um diagnóstico como `arquivo:linha:coluna: erro: mensagem`.
-fn report(path: &Path, diagnostic: Diagnostic) -> String {
+/// Formata um diagnóstico como `arquivo:linha:coluna: <tipo>: mensagem`.
+fn report(path: &Path, kind: &str, diagnostic: Diagnostic) -> String {
     format!(
-        "{}:{}:{}: erro: {}",
+        "{}:{}:{}: {kind}: {}",
         path.display(),
         diagnostic.position.line,
         diagnostic.position.column,

@@ -6,11 +6,12 @@
 //! de cada uma. Para no primeiro erro. As regras estão em `docs/semantica.md`.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::ast::{self, BinaryOperator, ElseBranch, ExpressionKind, StatementKind, UnaryOperator};
 use crate::checked::{
     Callee, CheckedBlock, CheckedCall, CheckedExpression, CheckedExpressionKind, CheckedFunction,
-    CheckedProgram, CheckedStatement, CheckedStatementKind, IntType, Type, Variable,
+    CheckedProgram, CheckedStatement, CheckedStatementKind, IntType, Type, Variable, arithmetic,
 };
 use crate::diagnostic::{Diagnostic, error};
 use crate::token::Position;
@@ -425,7 +426,10 @@ impl FunctionChecker<'_> {
                 (CheckedExpressionKind::Integer(value), Type::Int(ty))
             }
             ExpressionKind::Bool(value) => (CheckedExpressionKind::Bool(*value), Type::Bool),
-            ExpressionKind::Text(value) => (CheckedExpressionKind::Text(value.clone()), Type::Text),
+            ExpressionKind::Text(value) => (
+                CheckedExpressionKind::Text(Rc::from(value.as_str())),
+                Type::Text,
+            ),
             ExpressionKind::Name(name) => {
                 let Some(variable) = self.lookup(name) else {
                     let is_function = self.signatures.by_name.contains_key(name)
@@ -874,19 +878,6 @@ fn constant(expression: &CheckedExpression) -> Option<Constant> {
                 _ => None,
             },
         },
-        _ => None,
-    }
-}
-
-/// Aritmética exata em i128, com divisão truncada em direção a zero e resto com o sinal
-/// do dividendo. `None` para divisão por zero ou resultado fora até de i128.
-fn arithmetic(operator: BinaryOperator, a: i128, b: i128) -> Option<i128> {
-    match operator {
-        BinaryOperator::Add => a.checked_add(b),
-        BinaryOperator::Subtract => a.checked_sub(b),
-        BinaryOperator::Multiply => a.checked_mul(b),
-        BinaryOperator::Divide => a.checked_div(b),
-        BinaryOperator::Remainder => a.checked_rem(b),
         _ => None,
     }
 }

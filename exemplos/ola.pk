@@ -1,4 +1,4 @@
-# Primeiro programa em Pinker: por enquanto, o lexer e o parser o entendem.
+# Primeiro programa em Pinker. Execute com: pinker exemplos/ola.pk
 
 fun soma(a: int, b: int) -> int
     give a + b

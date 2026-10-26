@@ -146,7 +146,8 @@ máquina que poderia falhar ao calcular também o quociente.
 
 - Inteiros, `bool` e `text` se comportam como valores. O texto é imutável.
 - Não há referências nem ponteiros públicos na primeira versão.
-- **Implementação:** literais de texto ficam em armazenamento estático; textos dinâmicos
+- **Implementação:** cada literal de texto tem um armazenamento único, que vive com o
+  programa verificado (ver [`execucao.md`](execucao.md)); textos dinâmicos
   usam contagem de referências. Como um texto não referencia outros objetos, não há
   ciclos, e não é preciso um coletor de lixo geral nem um verificador de empréstimos.
 - **Obrigações da implementação:**
@@ -221,7 +222,8 @@ Pontos que o contrato não fixava e que o primeiro lexer decidiu. Podem ser revi
 
 `pinker <arquivo.pk> --emit=tokens` grava os tokens em `<arquivo>.tokens`, ao lado da
 entrada. `-o <caminho>` escolhe outro destino, e `-o -` escreve na saída padrão. Sem
-`--emit`, o arquivo passa por todas as etapas disponíveis e só os erros são mostrados.
+`--emit`, o programa passa por todas as etapas e é executado (ver
+[`execucao.md`](execucao.md)).
 Com `--emit`, as etapas rodam até a pedida: `--emit=tokens` funciona mesmo que o
 arquivo tenha erro de sintaxe.
 
