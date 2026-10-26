@@ -28,7 +28,9 @@ seção de que a tarefa precisa.
    - código: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
      `cargo test`;
    - só documentos: `git diff --check`, JSON válido, referências existentes.
-7. **Revise:** com o candidato identificado e parado, escreva o prompt a partir de
+7. **Revise:** com o candidato identificado e parado, garanta o diretório
+   (`mkdir -p .tarefas/<id>/evidencias`, também numa tarefa retomada), escreva nele o
+   prompt a partir de
    [`docs/modelos/prompt-revisao.md`](../../../docs/modelos/prompt-revisao.md) e lance o
    revisor (abaixo), sem pedir autorização à Founder.
 8. **Trate os achados:** confirmado → corrija; improcedente → justifique com evidência;
