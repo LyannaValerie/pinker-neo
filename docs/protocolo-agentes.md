@@ -65,9 +65,10 @@ quota acabar.
 - Escreva a versão nova inteira em `checkpoint.md.novo` e só então troque:
   `mv checkpoint.md.novo checkpoint.md`. Um checkpoint interrompido no meio nunca
   substitui o anterior. O `task.json` é atualizado do mesmo jeito (`task.json.novo`).
-- Ao parar, transferir ou encerrar, ponha `executor_atual` em `null` no `task.json`. É o
-  sinal de que ninguém mais está modificando a tarefa. Enquanto ele tiver um nome, o
-  executor nomeado pode estar ativo, mesmo esperando uma revisão.
+- Ao parar, transferir ou encerrar, ponha `executor_atual` em `null` no `task.json`.
+  `null` é uma **parada declarada**: diz que o executor anunciou que parou, não prova que
+  nada mais está modificando a tarefa. Enquanto ele tiver um nome, o executor nomeado
+  pode estar ativo, mesmo esperando uma revisão.
 
 ## Evidências: o que foi avaliado
 
@@ -90,9 +91,10 @@ com o resultado que eles deram.
 
 ## Retomar ou transferir
 
-1. Confirme que o executor anterior parou de modificar a tarefa: `executor_atual` é
-   `null`, ou a Founder confirma. Sem resposta, isso não está provado: não comece a
-   escrever em paralelo.
+1. Confirme que nenhum executor continua modificando a tarefa. Essa é uma condição a
+   confirmar, separada da parada declarada: `executor_atual` em `null` é o ponto de
+   partida, e a confirmação vem da Founder ou do próprio executor anterior. Sem
+   resposta, a ausência não está provada: não comece a escrever em paralelo.
 2. Leia as instruções do repositório, o `task.json` e o `checkpoint.md`.
 3. Observe de novo `git status`, HEAD e o diff, e compare com o checkpoint. Se não
    baterem, registre a diferença antes de continuar.
