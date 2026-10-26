@@ -225,7 +225,13 @@ entrada. `-o <caminho>` escolhe outro destino, e `-o -` escreve na saída padrã
 Com `--emit`, as etapas rodam até a pedida: `--emit=tokens` funciona mesmo que o
 arquivo tenha erro de sintaxe.
 
-A gramática, o parser e `--emit=ast` estão em [`gramatica.md`](gramatica.md).
+A gramática, o parser e `--emit=ast` estão em [`gramatica.md`](gramatica.md); a análise
+semântica e `--emit=semantic`, em [`semantica.md`](semantica.md).
+
+A CLI recusa gravar a saída sobre o próprio arquivo de entrada, inclusive quando o
+caminho de saída leva a ele por um link simbólico ou físico, e não altera a entrada. A
+verificação acontece antes da escrita: ela não protege contra o arquivo ser trocado por
+outro processo entre a verificação e a escrita.
 
 ## Adiado
 

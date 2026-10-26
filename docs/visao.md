@@ -15,7 +15,8 @@ quanto no alto nível.
 
 O vocabulário da linguagem (palavras reservadas, tipos e intrínsecas) está em
 [`palavras.md`](palavras.md). As decisões da primeira versão estão em
-[`decisoes.md`](decisoes.md), e a gramática, em [`gramatica.md`](gramatica.md).
+[`decisoes.md`](decisoes.md), a gramática, em [`gramatica.md`](gramatica.md), e as regras da análise semântica, em
+[`semantica.md`](semantica.md).
 
 ## Para que ela existe
 

@@ -5,12 +5,12 @@ use std::process::ExitCode;
 use std::{env, fs};
 
 use pinker::diagnostic::Diagnostic;
-use pinker::{ast, lexer, parser, token};
+use pinker::{ast, checked, lexer, parser, semantic, token};
 
 const USAGE: &str = "uso: pinker <arquivo.pk> [--emit=<etapa>] [-o <saída>]
 
   --emit=<etapa>  grava o resultado de uma etapa do pipeline
-                  etapas disponíveis: tokens, ast
+                  etapas disponíveis: tokens, ast, semantic
   -o <saída>      caminho do arquivo gravado (padrão: o arquivo de entrada com a
                   extensão da etapa, como ola.tokens); '-' escreve na saída padrão
   -h, --help      mostra esta ajuda
@@ -23,6 +23,7 @@ Sem --emit, o arquivo passa pelas etapas disponíveis e só os erros são mostra
 enum Stage {
     Tokens,
     Ast,
+    Semantic,
 }
 
 impl Stage {
@@ -30,6 +31,7 @@ impl Stage {
         match name {
             "tokens" => Some(Stage::Tokens),
             "ast" => Some(Stage::Ast),
+            "semantic" => Some(Stage::Semantic),
             _ => None,
         }
     }
@@ -38,6 +40,7 @@ impl Stage {
         match self {
             Stage::Tokens => "tokens",
             Stage::Ast => "ast",
+            Stage::Semantic => "semantic",
         }
     }
 }
@@ -59,7 +62,7 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
             return Ok(None);
         } else if let Some(name) = arg.strip_prefix("--emit=") {
             let stage = Stage::from_name(name).ok_or_else(|| {
-                format!("etapa desconhecida '{name}'; etapas disponíveis: tokens, ast")
+                format!("etapa desconhecida '{name}'; etapas disponíveis: tokens, ast, semantic")
             })?;
             emit = Some(stage);
         } else if arg == "-o" {
@@ -87,7 +90,7 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
 
 // pink-nav: start
 // pink-resume: Ponto de entrada: lê o arquivo, roda as etapas até a pedida, mostra erros e grava o resultado.
-// pink-keywords: main, execução, erro, código de saída, gravar arquivo
+// pink-keywords: main, execução, erro, código de saída, gravar arquivo, proteção da entrada
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let options = match parse_args(&args) {
@@ -127,8 +130,13 @@ fn run(options: &Options) -> Result<(), String> {
         return write_output(path, stage, output, &ast::render(&program));
     }
 
+    let checked = semantic::check(&program).map_err(|e| report(path, e))?;
+    if let Some(stage @ Stage::Semantic) = &options.emit {
+        return write_output(path, stage, output, &checked::render(&checked));
+    }
+
     eprintln!(
-        "pinker: '{}' passou pelo lexer e pelo parser sem erros (a execução ainda não existe)",
+        "pinker: '{}' passou pelo lexer, pelo parser e pela análise semântica sem erros (a execução ainda não existe)",
         path.display()
     );
     Ok(())
@@ -159,6 +167,12 @@ fn write_output(
         Some(path) => PathBuf::from(path),
         None => input.with_extension(stage.extension()),
     };
+    if same_file(input, &target) {
+        return Err(format!(
+            "pinker: a saída '{}' é o próprio arquivo de entrada; escolha outro caminho com -o",
+            target.display()
+        ));
+    }
     fs::write(&target, content).map_err(|e| {
         format!(
             "pinker: não foi possível gravar '{}': {e}",
@@ -171,5 +185,21 @@ fn write_output(
         target.display()
     );
     Ok(())
+}
+
+/// Verdadeiro quando os dois caminhos levam ao mesmo arquivo, inclusive por links
+/// simbólicos ou físicos. Um caminho que ainda não existe nunca é a entrada.
+#[cfg(unix)]
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::metadata(a), fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_file(a: &Path, b: &Path) -> bool {
+    matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 // pink-nav: end

@@ -127,3 +127,90 @@ fn emit_tokens_funciona_mesmo_com_erro_de_sintaxe() {
     assert!(output.status.success());
 }
 // pink-nav: end
+
+// pink-nav: start
+// pink-resume: A CLI recusa gravar sobre o próprio arquivo de entrada, por caminho direto, link ou extensão padrão.
+// pink-keywords: teste, cli, proteção, entrada, saída, symlink, hard link, -o
+fn assert_refuses_and_preserves(input: &PathBuf, args: &[&str]) {
+    let before = fs::read(input).unwrap();
+    let output = pinker().arg(input).args(args).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("é o próprio arquivo de entrada"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read(input).unwrap(), before);
+}
+
+#[test]
+fn saida_igual_a_entrada_e_recusada() {
+    let input = source_file("saida_igual_entrada", "fun main()\n    say(1)\n");
+    let path = input.to_str().unwrap().to_string();
+    assert_refuses_and_preserves(&input, &["--emit=ast", "-o", &path]);
+}
+
+#[test]
+fn saida_por_link_para_a_entrada_e_recusada() {
+    let input = source_file("saida_por_link", "fun main()\n    say(1)\n");
+    let dir = input.parent().unwrap();
+    let symlink = dir.join("simbolico.ast");
+    let hardlink = dir.join("fisico.ast");
+    let _ = fs::remove_file(&symlink);
+    let _ = fs::remove_file(&hardlink);
+    std::os::unix::fs::symlink(&input, &symlink).unwrap();
+    fs::hard_link(&input, &hardlink).unwrap();
+    for alias in [&symlink, &hardlink] {
+        assert_refuses_and_preserves(&input, &["--emit=ast", "-o", alias.to_str().unwrap()]);
+    }
+}
+
+#[test]
+fn extensao_padrao_igual_a_entrada_e_recusada() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("extensao_padrao");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("programa.ast");
+    fs::write(&input, "fun main()\n    say(1)\n").unwrap();
+    assert_refuses_and_preserves(&input, &["--emit=ast"]);
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: --emit=semantic grava a árvore verificada; erro semântico falha; etapas anteriores não dependem dela.
+// pink-keywords: teste, cli, emit, semantic, erro semântico, observabilidade
+#[test]
+fn emit_semantic_grava_a_arvore_verificada() {
+    let input = source_file(
+        "emit_semantic",
+        "fun main()\n    let x: u8 = 1\n    say(x)\n",
+    );
+    let status = pinker()
+        .arg(&input)
+        .arg("--emit=semantic")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let content = fs::read_to_string(input.with_extension("semantic")).unwrap();
+    assert!(content.contains("2:5          Let x#0: u8\n"), "{content}");
+}
+
+#[test]
+fn erro_semantico_falha_mas_ast_e_tokens_continuam_visiveis() {
+    let input = source_file("erro_semantico", "fun main()\n    break\n");
+    let output = pinker().arg(&input).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("ola.pk:2:5: erro: 'break' fora de um laço"),
+        "{stderr}"
+    );
+    for stage in ["--emit=tokens", "--emit=ast"] {
+        let output = pinker()
+            .arg(&input)
+            .args([stage, "-o", "-"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{stage}");
+    }
+}
+// pink-nav: end
