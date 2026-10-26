@@ -276,6 +276,24 @@ fn saida_que_nao_chega_ao_destino_e_falha_de_execucao() {
         stderr.contains("ola.pk:1:1: erro de execução: não foi possível escrever a saída"),
         "{stderr}"
     );
+    // A falha da saída é o próprio diagnóstico: não aparece de novo como saída perdida.
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn falha_ao_escrever_no_say_aparece_uma_vez() {
+    // A saída passa do tamanho do buffer, e a escrita falha durante um say.
+    let (code, stderr) = run_with_full_stdout(
+        "say_cheio",
+        "fun main()\n    let mut i = 0\n    while i < 10000\n        say(i)\n        i = i + 1\n",
+    );
+    assert_eq!(code, Some(3), "{stderr}");
+    assert!(
+        stderr.contains("ola.pk:4:9: erro de execução: não foi possível escrever a saída"),
+        "{stderr}"
+    );
+    assert_eq!(stderr.lines().count(), 1, "{stderr}");
 }
 
 #[cfg(target_os = "linux")]

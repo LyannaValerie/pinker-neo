@@ -218,7 +218,10 @@ fn run(options: &Options) -> Result<(), Failure> {
 }
 
 fn execute(program: &checked::CheckedProgram, source: &str) -> Result<(), Failure> {
-    let mut stdout = BufWriter::new(io::stdout().lock());
+    let mut stdout = BufWriter::new(Output {
+        inner: io::stdout().lock(),
+        failed: false,
+    });
     // Ao terminar normalmente, `run` já descarrega a saída e devolve a falha de escrita, se
     // houver.
     let Err(e) = interpreter::run(program, &mut stdout) else {
@@ -226,13 +229,47 @@ fn execute(program: &checked::CheckedProgram, source: &str) -> Result<(), Failur
     };
     // Numa falha, a saída escrita antes dela aparece antes do diagnóstico. Se nem isso for
     // possível, o diagnóstico da falha é mantido e a perda da saída é informada junto.
+    // Quando a falha foi da própria saída, ela já é o diagnóstico: tentar de novo só
+    // repetiria o mesmo erro.
     let mut message = report(source, "erro de execução", e);
-    if let Err(e) = stdout.flush() {
+    if !stdout.get_ref().failed
+        && let Err(e) = stdout.flush()
+    {
         message.push_str(&format!(
             "\npinker: além disso, a saída escrita antes da falha se perdeu: {e}"
         ));
     }
     Err(Failure { message, code: 3 })
+}
+
+/// A saída padrão, lembrando se alguma escrita falhou. Uma interrupção não conta: quem
+/// escreve tenta de novo.
+struct Output<W> {
+    inner: W,
+    failed: bool,
+}
+
+impl<W> Output<W> {
+    fn note<T>(&mut self, result: io::Result<T>) -> io::Result<T> {
+        if let Err(e) = &result
+            && e.kind() != io::ErrorKind::Interrupted
+        {
+            self.failed = true;
+        }
+        result
+    }
+}
+
+impl<W: Write> Write for Output<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let result = self.inner.write(buffer);
+        self.note(result)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let result = self.inner.flush();
+        self.note(result)
+    }
 }
 
 /// Formata um diagnóstico como `fonte:linha:coluna: <tipo>: mensagem`.

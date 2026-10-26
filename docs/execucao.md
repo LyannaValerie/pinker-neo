@@ -81,6 +81,7 @@ São falhas definidas de execução:
   programa nunca termina com sucesso sem ter entregado a saída.
 - Se o programa falhou e a saída escrita antes da falha também não pôde ser entregue, o
   diagnóstico da falha é mantido, seguido de uma linha que informa a perda da saída.
+  Quando a falha é a da própria saída, ela aparece uma vez só.
 ## Limites desta implementação
 
 O interpretador é recursivo: cada chamada, bloco e expressão da Pinker usa pilha do
