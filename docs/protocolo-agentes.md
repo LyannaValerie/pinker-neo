@@ -92,9 +92,9 @@ com o resultado que eles deram.
 ## Retomar ou transferir
 
 1. Confirme que nenhum executor continua modificando a tarefa. Essa é uma condição a
-   confirmar, separada da parada declarada: `executor_atual` em `null` é o ponto de
-   partida, e a confirmação vem da Founder ou do próprio executor anterior. Sem
-   resposta, a ausência não está provada: não comece a escrever em paralelo.
+   confirmar, separada da parada declarada: quem confirma é a Founder, com ou sem
+   `executor_atual` em `null`. O executor anterior só pode confirmar a própria parada.
+   Sem resposta, a ausência não está provada: não comece a escrever em paralelo.
 2. Leia as instruções do repositório, o `task.json` e o `checkpoint.md`.
 3. Observe de novo `git status`, HEAD e o diff, e compare com o checkpoint. Se não
    baterem, registre a diferença antes de continuar.
