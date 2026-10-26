@@ -8,6 +8,15 @@ A Pinker é uma linguagem de programação **estática** com sintaxe inspirada e
 Ela oferece recursos comuns às linguagens de alto nível, mas suas principais
 capacidades estão no **baixo nível**.
 
+## Objetivo
+
+Uma linguagem focada em **segurança**, **velocidade** e **criação**, tanto no baixo
+quanto no alto nível.
+
+O vocabulário da linguagem (palavras reservadas, tipos e intrínsecas) está em
+[`palavras.md`](palavras.md). As decisões da primeira versão estão em
+[`decisoes.md`](decisoes.md).
+
 ## Para que ela existe
 
 A Pinker é a base de um projeto maior, construído em camadas:
@@ -17,6 +26,16 @@ A Pinker é a base de um projeto maior, construído em camadas:
 2. **Pinker Next.** Uma segunda linguagem, **dinâmica**, escrita em Pinker e mais
    próxima de Python ou Ruby do que de C. Ela herda a filosofia da Pinker.
 3. **O sistema operacional.** Um sistema operacional completo, escrito em Pinker Next.
+
+## Livros de referência
+
+O projeto segue o passo a passo de três livros, em duas fases:
+
+1. **Construir a Pinker:**
+   - *Crafting Interpreters*, de Robert Nystrom.
+   - *Writing an Interpreter in Go*, de Thorsten Ball.
+2. **Usar a Pinker para construir o sistema** descrito em *The Elements of Computing
+   Systems* (Nand2Tetris), de Noam Nisan e Shimon Schocken.
 
 ## Linguagens de implementação
 
@@ -135,7 +154,8 @@ seção e a identificação numérica.
 
 - As etapas do pipeline e o formato do que cada uma produz.
 - Os nomes das etapas aceitos por `--emit`.
-- Como o "computador" será construído: emulador em software, hardware descrito em
-  outra linguagem, ou outra abordagem.
+- Como as etapas de *The Elements of Computing Systems* (portas lógicas, CPU, memória,
+  assembler, máquina virtual, compilador, sistema operacional) se distribuem entre a
+  Pinker e a Pinker Next.
 - Detalhes das âncoras de navegação: formato do identificador, nomes de seção e
   identificação numérica.
