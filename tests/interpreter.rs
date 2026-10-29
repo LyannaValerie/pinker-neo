@@ -392,3 +392,17 @@ fn descarga_recusada_no_fim_e_falha_de_execucao() {
     assert_eq!((e.position.line, e.position.column), (1, 1));
 }
 // pink-nav: end
+
+// pink-nav: start
+// pink-resume: Os valores e o limite de chamadas continuam acessíveis pelo caminho antigo do interpretador, além do runtime.
+// pink-keywords: teste, runtime, reexportação, caminho antigo, value, limite de chamadas
+#[test]
+fn caminho_antigo_do_interpretador_continua_valendo() {
+    assert_eq!(
+        pinker::interpreter::MAX_CALL_DEPTH,
+        pinker::runtime::MAX_CALL_DEPTH
+    );
+    let value: pinker::runtime::Value = pinker::interpreter::Value::Bool(true);
+    assert_eq!(value.to_string(), "true");
+}
+// pink-nav: end

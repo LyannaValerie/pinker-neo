@@ -7,7 +7,12 @@ As decisões de execução da Pinker. Há dois motores, e as regras valem para o
 - **O interpretador de árvore** (`src/interpreter.rs`) percorre a árvore verificada
   (`src/checked.rs`) diretamente. Fica como referência: os testes exigem que os dois
   deem a mesma saída, o mesmo código de término e o mesmo diagnóstico, com a mesma
-  mensagem e a mesma posição, e as operações sobre valores são o mesmo código nos dois.
+  mensagem e a mesma posição.
+
+Os dois usam o mesmo **runtime** (`src/runtime.rs`): os valores em execução, as
+operações sobre eles (aritmética conferida, comparações, negação, `morph`, `say`), as
+falhas definidas com as suas mensagens e o limite de chamadas. Uma regra de execução é
+escrita uma vez só, e por isso não pode divergir entre os motores.
 
 Nenhum dos dois refaz resolução de nomes nem inferência de tipos: usam os vínculos e
 tipos que a análise semântica já resolveu. As regras de aritmética,
@@ -115,6 +120,33 @@ aninhamento do programa.
   processo sem diagnóstico da Pinker. Uma pilha explícita, no lugar da recursão, pode ser
   avaliada quando essa limitação importar.
 - **Thread:** se a thread não puder ser criada, a CLI informa e termina com código 1.
+
+## Desempenho
+
+Medição de 2026-10-28, com `cargo test --release --test desempenho -- --ignored
+--nocapture` (`tests/desempenho.rs`): cinco programas, cada um executado uma vez para
+aquecer e cinco vezes medidas em cada motor. O tempo é a mediana, só da execução (a
+tradução para bytecode fica fora), e os dois motores precisam dar a mesma saída. Máquina:
+AMD Ryzen 7 5700X, Linux no WSL2, `rustc` 1.99.0.
+
+| Programa | Interpretador (ms) | VM (ms) | VM / interpretador |
+|---|---:|---:|---:|
+| Recursão (Fibonacci 27) | 87 | 67 | 0,76 |
+| Laço aritmético (3 milhões de voltas) | 411 | 430 | 1,05 |
+| Laços aninhados (primos abaixo de 30 mil) | 77 | 79 | 1,03 |
+| Laços longos com `u64` (Collatz até 30 mil) | 452 | 460 | 1,02 |
+| Cópia de textos (1 milhão de voltas) | 186 | 195 | 1,05 |
+
+A tabela é uma de três execuções completas. Nas três, a razão VM / interpretador ficou
+entre 0,76 e 0,77 na recursão e entre 0,99 e 1,07 nos outros quatro programas.
+
+- Nestes programas, a VM não é mais rápida que o interpretador de árvore: nos laços, leva
+  o mesmo tempo ou até 7% mais, e só nas chamadas recursivas leva menos, cerca de 24%
+  menos tempo.
+- Os números valem para esta máquina e estes programas; não são uma garantia geral.
+- Não houve perfil de execução. Uma hipótese a conferir antes de otimizar: o custo está
+  no que os dois motores compartilham, como a aritmética em 128 bits com faixa conferida
+  e os valores num `enum` com textos contados, e não no despacho das instruções.
 
 ## Falhas fatais do ambiente
 

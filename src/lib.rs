@@ -9,6 +9,7 @@ pub mod interpreter;
 pub mod lexer;
 pub mod lower;
 pub mod parser;
+pub mod runtime;
 pub mod semantic;
 pub mod token;
 pub mod verifier;

@@ -2,9 +2,10 @@
 //!
 //! É iterativa: as chamadas da Pinker não usam a pilha do Rust. Cada chamada tem um quadro
 //! com uma posição por variável, e todas compartilham uma pilha de valores. As operações
-//! sobre valores, as mensagens das falhas e o limite de chamadas são os mesmos do
-//! interpretador de árvore (`interpreter`), que continua como referência: os dois
-//! precisam dar a mesma saída e o mesmo diagnóstico para qualquer programa. As regras de
+//! sobre valores, as mensagens das falhas e o limite de chamadas vêm do runtime
+//! (`runtime`), o mesmo do interpretador de árvore (`interpreter`), que continua como
+//! referência: os dois precisam dar a mesma saída e o mesmo diagnóstico para qualquer
+//! programa. As regras de
 //! execução estão em `docs/execucao.md`.
 
 use std::io::Write;
@@ -14,7 +15,7 @@ use crate::ast::BinaryOperator;
 use crate::bytecode::{BytecodeProgram, Operation, is_ordering};
 use crate::checked::Type;
 use crate::diagnostic::Diagnostic;
-use crate::interpreter::{
+use crate::runtime::{
     MAX_CALL_DEPTH, Value, binary_values, call_limit, convert, negate, output_error, say,
 };
 use crate::token::Position;
