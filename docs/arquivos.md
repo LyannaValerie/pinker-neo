@@ -266,6 +266,52 @@ Há dois tipos de erro, e cada um aponta para um lugar diferente:
   posição no código-fonte de origem, cujo nome vem do cabeçalho:
   `ola.pk:3:5: erro: ...`. É o mesmo diagnóstico do pipeline direto.
 
+### O trecho do código-fonte
+
+Quando a entrada é o próprio código-fonte, o diagnóstico da linguagem (léxico,
+sintático, semântico ou de execução) mostra, embaixo da primeira linha, a linha do código
+e um `^` na posição:
+
+```text
+exemplo.pk:2:5: erro: caractere inesperado '@'
+  2 |     @
+    |     ^
+```
+
+```text
+começando
+conta.pk:4:20: erro de execução: overflow: 200 + 100 = 300 não cabe em u8
+  4 |     say(quantidade + 100)
+    |                    ^
+```
+
+- A primeira linha e o código de saída não mudam. O trecho vai para o stderr, junto com
+  o diagnóstico; a saída padrão do programa não muda. Se a saída escrita antes de uma
+  falha de execução se perder, o aviso vem depois do trecho.
+- O trecho vem do texto que a CLI leu e que as etapas receberam, e o arquivo não é lido
+  de novo. Se a entrada é código-fonte, a decisão é do conteúdo, como na seção
+  "Cabeçalho", e não da extensão.
+- Com um arquivo de etapa na entrada, não há trecho: o diagnóstico fica só na primeira
+  linha. A fonte do cabeçalho é uma origem declarada e não prova nada sobre o arquivo
+  com esse nome, que pode ter mudado ou ser outro. Mostrar uma linha dele apresentaria
+  como origem do erro um código que talvez não seja o que foi compilado. Por isso esse
+  arquivo não é aberto.
+- Sem a linha ou a coluna da posição no texto, o trecho é omitido e o diagnóstico fica
+  só na primeira linha. A coluna pode ser a logo depois do último caractere da linha. No
+  fim do arquivo, depois da última quebra, a linha é a seguinte, vazia.
+- As colunas contam caracteres, como no resto da Pinker. As linhas terminam em `\n`, e
+  o `\r` de um CRLF não aparece.
+- Cada tabulação aparece como quatro espaços. Os caracteres de controle (menos a
+  tabulação), os de direção do texto (U+061C, U+200E, U+200F, U+202A a U+202E e U+2066 a
+  U+2069), os separadores U+2028 e U+2029 e o BOM (U+FEFF) aparecem escapados, como
+  `\u{1b}`. Assim, o trecho não manda controles ao terminal. O `^` acompanha a
+  largura com que cada caractere anterior aparece.
+- O `^` conta uma posição por caractere apresentado. Caracteres largos (como muitos
+  emojis e ideogramas) e combinantes podem ocupar outra largura no terminal e desalinhar
+  o marcador. A posição na primeira linha continua sendo a referência exata.
+- Só o trecho escapa os controles. A mensagem da primeira linha continua como era: um
+  caractere inesperado aparece nela como está no arquivo.
+
 `--emit` precisa pedir uma etapa posterior à da entrada: `pinker ola.a --emit=tokens` é
 erro de uso, com código 2.
 

@@ -274,12 +274,15 @@ fn run_with_full_stdout(name: &str, source: &str) -> (Option<i32>, String) {
 fn saida_que_nao_chega_ao_destino_e_falha_de_execucao() {
     let (code, stderr) = run_with_full_stdout("saida_cheia", "fun main()\n    say(1)\n");
     assert_eq!(code, Some(3), "{stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    // A falha da saída é o próprio diagnóstico, com o trecho da main: não aparece de novo
+    // como saída perdida.
+    assert_eq!(lines.len(), 3, "{stderr}");
     assert!(
-        stderr.contains("ola.pk:1:1: erro de execução: não foi possível escrever a saída"),
+        lines[0].contains("ola.pk:1:1: erro de execução: não foi possível escrever a saída"),
         "{stderr}"
     );
-    // A falha da saída é o próprio diagnóstico: não aparece de novo como saída perdida.
-    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert_eq!(lines[1..], ["  1 | fun main()", "    | ^"], "{stderr}");
 }
 
 #[cfg(target_os = "linux")]
@@ -291,11 +294,17 @@ fn falha_ao_escrever_no_say_aparece_uma_vez() {
         "fun main()\n    let mut i = 0\n    while i < 10000\n        say(i)\n        i = i + 1\n",
     );
     assert_eq!(code, Some(3), "{stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 3, "{stderr}");
     assert!(
-        stderr.contains("ola.pk:4:9: erro de execução: não foi possível escrever a saída"),
+        lines[0].contains("ola.pk:4:9: erro de execução: não foi possível escrever a saída"),
         "{stderr}"
     );
-    assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    assert_eq!(
+        lines[1..],
+        ["  4 |         say(i)", "    |         ^"],
+        "{stderr}"
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -306,12 +315,20 @@ fn falha_de_execucao_com_saida_perdida_mantem_o_diagnostico() {
         "fun main()\n    say(1)\n    let z = 0\n    say(1 / z)\n",
     );
     assert_eq!(code, Some(3), "{stderr}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    // O diagnóstico e o trecho vêm primeiro; o aviso da saída perdida, uma vez, depois.
+    assert_eq!(lines.len(), 4, "{stderr}");
     assert!(
-        stderr.contains("ola.pk:4:11: erro de execução: divisão por zero"),
+        lines[0].ends_with("ola.pk:4:11: erro de execução: divisão por zero"),
+        "{stderr}"
+    );
+    assert_eq!(
+        lines[1..3],
+        ["  4 |     say(1 / z)", "    |           ^"],
         "{stderr}"
     );
     assert!(
-        stderr.contains("pinker: além disso, a saída escrita antes da falha se perdeu"),
+        lines[3].starts_with("pinker: além disso, a saída escrita antes da falha se perdeu"),
         "{stderr}"
     );
 }
@@ -520,6 +537,175 @@ fn b_adulterado_e_recusado_antes_de_executar() {
     assert!(
         stderr.contains("ola.pk:2:5: erro: bytecode inconsistente"),
         "{stderr}"
+    );
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Trecho do código nos diagnósticos: só com entrada de código-fonte (pelo conteúdo), nunca a partir da fonte declarada por um arquivo de etapa.
+// pink-keywords: teste, cli, diagnóstico, trecho, marcador, unicode, crlf, tabulação, controle, fim do arquivo, artefato, fonte
+/// Executa `pinker <entrada> [args]` e devolve o código, a saída padrão e o stderr.
+fn run(input: &PathBuf, args: &[&str]) -> (Option<i32>, String, String) {
+    let output = pinker().arg(input).args(args).output().unwrap();
+    (
+        output.status.code(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn erros_de_compilacao_mostram_a_linha_e_o_marcador() {
+    let cases = [
+        (
+            "trecho_lexico",
+            "fun main()\n    say(\"ação\") @\n",
+            ":2:17: erro: caractere inesperado '@'\n  2 |     say(\"ação\") @\n    |                 ^\n",
+        ),
+        (
+            "trecho_sintatico",
+            "fun main()\n    a + b\n",
+            ":2:7: erro: esperava '=' ou '(' depois de 'a' (uma instrução que começa com um nome é uma atribuição ou uma chamada), encontrei '+'\n  2 |     a + b\n    |       ^\n",
+        ),
+        (
+            "trecho_semantico",
+            "fun main()\n    break\n",
+            ":2:5: erro: 'break' fora de um laço\n  2 |     break\n    |     ^\n",
+        ),
+        (
+            "trecho_crlf_e_tabulacao",
+            "fun main()\r\n\tsay(1)\r\n",
+            ":2:1: erro: tabulação na indentação; use espaços\n  2 |     say(1)\n    | ^\n",
+        ),
+        (
+            "trecho_controle",
+            "fun main()\n    say(\"\u{1b}[2J\") @\n",
+            ":2:17: erro: caractere inesperado '@'\n  2 |     say(\"\\u{1b}[2J\") @\n    |                      ^\n",
+        ),
+        (
+            "trecho_fim_com_quebra",
+            "fun main()\n",
+            ":2:1: erro: esperava um bloco indentado, encontrei o fim do arquivo\n  2 | \n    | ^\n",
+        ),
+        (
+            "trecho_fim_sem_quebra",
+            "fun main()\n    say(1",
+            ":2:8: erro: '(' aberto aqui não foi fechado\n  2 |     say(1\n    |        ^\n",
+        ),
+    ];
+    for (name, source, expected) in cases {
+        let input = source_file(name, source);
+        let (code, stdout, stderr) = run(&input, &[]);
+        assert_eq!(code, Some(1), "{name}: {stderr}");
+        assert!(stdout.is_empty(), "{name}");
+        assert_eq!(stderr, format!("{}{expected}", input.display()), "{name}");
+    }
+}
+
+#[test]
+fn falha_de_execucao_mostra_o_trecho_depois_da_saida() {
+    let input = source_file(
+        "trecho_execucao",
+        "fun main()\n    say(1)\n    let z = 0\n    say(1 / z)\n",
+    );
+    let (code, stdout, stderr) = run(&input, &[]);
+    assert_eq!(code, Some(3), "{stderr}");
+    assert_eq!(stdout, "1\n");
+    assert_eq!(
+        stderr,
+        format!(
+            "{}:4:11: erro de execução: divisão por zero\n  4 |     say(1 / z)\n    |           ^\n",
+            input.display()
+        )
+    );
+}
+
+/// Grava o `.pk` com outro conteúdo, de várias linhas, depois que as etapas foram geradas:
+/// se o diagnóstico abrisse a fonte declarada, haveria uma linha para mostrar.
+fn replace_source(input: &PathBuf) {
+    fs::write(
+        input,
+        "outro conteúdo\nque não é o programa\nnem o que\nfoi compilado\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn arquivo_de_etapa_nao_mostra_a_fonte_declarada() {
+    // Erro semântico encontrado ao continuar de um .t ou de um .a.
+    let input = source_file("fonte_trocada_compilacao", "fun main()\n    break\n");
+    for stage in ["tokens", "ast"] {
+        let status = pinker().arg(&input).arg(format!("--emit={stage}")).status();
+        assert!(status.unwrap().success(), "{stage}");
+    }
+    replace_source(&input);
+    for extension in ["t", "a"] {
+        let (code, stdout, stderr) = run(&input.with_extension(extension), &[]);
+        assert_eq!(code, Some(1), "{extension}: {stderr}");
+        assert!(stdout.is_empty(), "{extension}");
+        assert_eq!(
+            stderr,
+            format!("{}:2:5: erro: 'break' fora de um laço\n", input.display()),
+            "{extension}"
+        );
+    }
+
+    // Falha de execução ao continuar de um .s ou de um .b.
+    let input = source_file(
+        "fonte_trocada_execucao",
+        "fun main()\n    say(1)\n    let z = 0\n    say(1 / z)\n",
+    );
+    for stage in ["semantic", "bytecode"] {
+        let status = pinker().arg(&input).arg(format!("--emit={stage}")).status();
+        assert!(status.unwrap().success(), "{stage}");
+    }
+    replace_source(&input);
+    for extension in ["s", "b"] {
+        let (code, stdout, stderr) = run(&input.with_extension(extension), &[]);
+        assert_eq!(code, Some(3), "{extension}: {stderr}");
+        assert_eq!(stdout, "1\n", "{extension}");
+        assert_eq!(
+            stderr,
+            format!(
+                "{}:4:11: erro de execução: divisão por zero\n",
+                input.display()
+            ),
+            "{extension}"
+        );
+    }
+}
+
+#[test]
+fn tipo_de_entrada_vem_do_conteudo_e_nao_da_extensao() {
+    // Código-fonte num arquivo com a extensão do bytecode: mostra o trecho.
+    let dir = fresh_dir("conteudo_fonte_com_extensao_b");
+    let disguised = dir.join("programa.b");
+    fs::write(&disguised, "fun main()\n    break\n").unwrap();
+    let (code, _, stderr) = run(&disguised, &[]);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert_eq!(
+        stderr,
+        format!(
+            "{}:2:5: erro: 'break' fora de um laço\n  2 |     break\n    |     ^\n",
+            disguised.display()
+        )
+    );
+
+    // Tokens num arquivo .pk: é um arquivo de etapa, sem trecho, mesmo com a fonte
+    // declarada intacta.
+    let input = source_file("conteudo_tokens_com_extensao_pk", "fun main()\n    break\n");
+    let tokens = input.with_file_name("tokens.pk");
+    let status = pinker()
+        .arg(&input)
+        .args(["--emit=tokens", "-o"])
+        .arg(&tokens)
+        .status();
+    assert!(status.unwrap().success());
+    let (code, _, stderr) = run(&tokens, &[]);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert_eq!(
+        stderr,
+        format!("{}:2:5: erro: 'break' fora de um laço\n", input.display())
     );
 }
 // pink-nav: end

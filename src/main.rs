@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use std::{env, fs, thread};
 
 use pinker::artifact::{self, Format, FormatError};
-use pinker::diagnostic::Diagnostic;
+use pinker::diagnostic::{self, Diagnostic};
 use pinker::{ast, bytecode, checked, lexer, lower, parser, semantic, token, verifier, vm};
 
 const USAGE: &str = "uso: pinker <arquivo> [--emit=<etapa>] [-o <saída>]
@@ -179,7 +179,12 @@ fn run(options: &Options) -> Result<(), Failure> {
             code: 2,
         });
     }
-    let failed = |e: Diagnostic| report(&source, "erro", e);
+    // O trecho do código sob o diagnóstico só aparece quando a entrada é o código-fonte, e
+    // vem do texto lido acima, o mesmo que as etapas recebem. A fonte de um arquivo de etapa
+    // é só um nome declarado: o arquivo com esse nome pode ter outro conteúdo, e não é
+    // aberto.
+    let text = start.is_none().then_some(content.as_str());
+    let failed = |e: Diagnostic| report(&source, text, "erro", e);
     let mut data = match start {
         None => Data::Source,
         Some(Format::Tokens) => Data::Tokens(token::read(&content).map_err(malformed)?),
@@ -229,13 +234,17 @@ fn run(options: &Options) -> Result<(), Failure> {
                 if options.emit == Some(Format::Bytecode) {
                     return emit(Format::Bytecode, bytecode::render(&program, &source));
                 }
-                return execute(&program, &source);
+                return execute(&program, &source, text);
             }
         };
     }
 }
 
-fn execute(program: &bytecode::BytecodeProgram, source: &str) -> Result<(), Failure> {
+fn execute(
+    program: &bytecode::BytecodeProgram,
+    source: &str,
+    text: Option<&str>,
+) -> Result<(), Failure> {
     let mut stdout = BufWriter::new(Output {
         inner: io::stdout().lock(),
         failed: false,
@@ -249,7 +258,7 @@ fn execute(program: &bytecode::BytecodeProgram, source: &str) -> Result<(), Fail
     // possível, o diagnóstico da falha é mantido e a perda da saída é informada junto.
     // Quando a falha foi da própria saída, ela já é o diagnóstico: tentar de novo só
     // repetiria o mesmo erro.
-    let mut message = report(source, "erro de execução", e);
+    let mut message = report(source, text, "erro de execução", e);
     if !stdout.get_ref().failed
         && let Err(e) = stdout.flush()
     {
@@ -290,12 +299,19 @@ impl<W: Write> Write for Output<W> {
     }
 }
 
-/// Formata um diagnóstico como `fonte:linha:coluna: <tipo>: mensagem`.
-fn report(source: &str, kind: &str, diagnostic: Diagnostic) -> String {
-    format!(
+/// Formata um diagnóstico como `fonte:linha:coluna: <tipo>: mensagem`. Com o `text` do
+/// código-fonte, acrescenta a linha da posição e o marcador (`diagnostic::excerpt`), se a
+/// posição existir nele.
+fn report(source: &str, text: Option<&str>, kind: &str, diagnostic: Diagnostic) -> String {
+    let mut message = format!(
         "{source}:{}:{}: {kind}: {}",
         diagnostic.position.line, diagnostic.position.column, diagnostic.message
-    )
+    );
+    if let Some(excerpt) = text.and_then(|text| diagnostic::excerpt(text, diagnostic.position)) {
+        message.push('\n');
+        message.push_str(&excerpt);
+    }
+    message
 }
 // pink-nav: end
 
@@ -352,3 +368,38 @@ fn same_file(a: &Path, b: &Path) -> bool {
     matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 // pink-nav: end
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pinker::token::Position;
+
+    // pink-nav: start
+    // pink-resume: Teste do report: sem fonte ou com posição fora dele, o diagnóstico básico fica inteiro e sozinho.
+    // pink-keywords: teste, report, diagnóstico, trecho, posição inválida, fonte indisponível
+    #[test]
+    fn sem_trecho_o_diagnostico_basico_fica_inteiro() {
+        let diagnostic = |line, column| Diagnostic {
+            message: "m".to_string(),
+            position: Position { line, column },
+        };
+        let text = "fun main()\n    @\n";
+        for (text, line, column) in [
+            (None, 2, 5),
+            (Some(text), 4, 1),
+            (Some(text), 2, 7),
+            (Some(text), 0, 0),
+            (Some(""), 2, 1),
+        ] {
+            assert_eq!(
+                report("x.pk", text, "erro", diagnostic(line, column)),
+                format!("x.pk:{line}:{column}: erro: m")
+            );
+        }
+        assert_eq!(
+            report("x.pk", Some(text), "erro", diagnostic(2, 5)),
+            "x.pk:2:5: erro: m\n  2 |     @\n    |     ^"
+        );
+    }
+    // pink-nav: end
+}

@@ -108,7 +108,9 @@ São falhas definidas de execução:
 | Erro ao escrever a saída de `say` | `não foi possível escrever a saída: ...` |
 
 - O diagnóstico segue o formato dos outros: `arquivo:linha:coluna: erro de execução:
-  mensagem`. A posição é a do operador, da conversão ou da chamada que falhou.
+  mensagem`. A posição é a do operador, da conversão ou da chamada que falhou. Quando a
+  entrada é o código-fonte, a linha e um `^` vêm embaixo (ver "O trecho do
+  código-fonte" em [`arquivos.md`](arquivos.md)).
 - A falha encerra o programa na hora, sem executar mais nada.
 - A saída que o programa já escreveu antes da falha é preservada e aparece antes do
   diagnóstico.

@@ -110,7 +110,14 @@ fn exemplos_executam_direto_e_por_arquivos() {
                 "{name}: {from} -> {stage}: {output:?}"
             );
         }
-        // Tanto o .s quanto o .b executam, e igual ao caminho direto.
+        // Tanto o .s quanto o .b executam, e igual ao caminho direto. O diagnóstico de uma
+        // falha é a mesma primeira linha, sem o trecho do código, que só aparece quando a
+        // entrada é o código-fonte.
+        let direct_stderr = String::from_utf8(direct.stderr.clone()).unwrap();
+        let basic = direct_stderr
+            .lines()
+            .next()
+            .map_or(String::new(), |line| format!("{line}\n"));
         for extension in ["s", "b"] {
             let by_file = pinker(&[&source.with_extension(extension)]);
             assert_eq!(
@@ -119,7 +126,11 @@ fn exemplos_executam_direto_e_por_arquivos() {
                 "{name}.{extension}"
             );
             assert_eq!(by_file.stdout, direct.stdout, "{name}.{extension}");
-            assert_eq!(by_file.stderr, direct.stderr, "{name}.{extension}");
+            assert_eq!(
+                String::from_utf8(by_file.stderr).unwrap(),
+                basic,
+                "{name}.{extension}"
+            );
         }
     }
 }
