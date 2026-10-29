@@ -1,12 +1,14 @@
-# Inteiros de largura explícita, literais em outras bases e conversões com morph.
+# Inteiros de largura explícita, literais em outras bases, o separador de dígitos e
+# conversões com morph.
 # Execute com: pinker exemplos/tipos.pk
 
 fun main()
     # O literal assume o tipo pedido pela anotação, se couber nele.
     let byte: u8 = 0xFF
-    let mascara: u8 = 0b10100000
+    let mascara: u8 = 0b1010_0000
     let pequeno: i8 = -128
-    let grande: u64 = 18446744073709551615
+    # O separador '_' facilita a leitura e não muda o valor.
+    let grande: u64 = 18_446_744_073_709_551_615
     say(byte)
     say(mascara)
     say(pequeno)
@@ -14,7 +16,7 @@ fun main()
 
     # Não há promoção implícita: somar u8 com i64 exige converter antes.
     let largo: i64 = morph(byte)
-    say(largo + 1000)
+    say(largo + 1_000)
 
     # Uma conversão que pode não caber é conferida na execução; esta cabe.
     let de_volta: u8 = morph(largo - 55)

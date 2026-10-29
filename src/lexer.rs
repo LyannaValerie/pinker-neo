@@ -215,8 +215,9 @@ impl Lexer {
 
     // pink-nav: start
     // pink-resume: Lê um inteiro decimal, hexadecimal (0x) ou binário (0b), guardando base e dígitos sem converter.
-    // Zeros à esquerda são decimais: `010` é dez, nunca octal.
-    // pink-keywords: número, inteiro, literal, hexadecimal, binário, prefixo, dígito inválido
+    // Zeros à esquerda são decimais: `010` é dez, nunca octal. O separador `_` fica só na
+    // grafia; os dígitos guardados não o têm.
+    // pink-keywords: número, inteiro, literal, hexadecimal, binário, prefixo, dígito inválido, separador, sublinhado
     fn number(&mut self) -> Result<(), Diagnostic> {
         let start = self.position();
         let begin = self.index;
@@ -254,16 +255,30 @@ impl Lexer {
                 start,
             ));
         }
-        if let Some((offset, digit)) = digits.chars().enumerate().find(|(_, c)| !base.accepts(*c)) {
-            let position = Position {
-                line: start.line,
-                column: start.column + (digits_begin - begin) + offset,
-            };
-            return Err(error(
-                format!("'{digit}' não é um dígito {}", base.name()),
-                position,
-            ));
+        let column = |offset: usize| Position {
+            line: start.line,
+            column: start.column + (digits_begin - begin) + offset,
+        };
+        // O primeiro problema da esquerda para a direita: um dígito inválido ou um
+        // separador fora do lugar. O separador só pode ficar entre dois dígitos: nem no
+        // início (inclusive logo depois do prefixo), nem no fim, nem repetido.
+        let chars: Vec<char> = digits.chars().collect();
+        for (offset, &c) in chars.iter().enumerate() {
+            if c == '_' {
+                if offset == 0 || chars.get(offset + 1).is_none_or(|&next| next == '_') {
+                    return Err(error(
+                        "o separador '_' só pode ficar entre dois dígitos, como em 1_000",
+                        column(offset),
+                    ));
+                }
+            } else if !base.accepts(c) {
+                return Err(error(
+                    format!("'{c}' não é um dígito {}", base.name()),
+                    column(offset),
+                ));
+            }
         }
+        let digits = digits.replace('_', "");
         if self.peek() == Some('.') && matches!(self.peek_next(), Some(c) if c.is_ascii_digit()) {
             return Err(error(
                 "números com parte fracionária ainda não existem na Pinker",

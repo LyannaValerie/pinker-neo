@@ -201,8 +201,8 @@ fn texto_nao_fechado_e_erro() {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Inteiros: bases, grafia preservada sem conversão, e prefixos, dígitos e frações inválidos.
-// pink-keywords: teste, número, inteiro, hexadecimal, binário, prefixo, i64, u64
+// pink-resume: Inteiros: bases, grafia preservada sem conversão, separador de dígitos, e prefixos, dígitos e frações inválidos.
+// pink-keywords: teste, número, inteiro, hexadecimal, binário, prefixo, i64, u64, separador, sublinhado
 #[test]
 fn inteiros_guardam_base_e_digitos() {
     assert_eq!(
@@ -263,6 +263,64 @@ fn prefixos_aceitam_maiusculas() {
 #[test]
 fn zeros_a_esquerda_sao_decimais() {
     assert_eq!(kinds("010"), ["int10:010", "NL", "EOF"]);
+}
+
+#[test]
+fn separador_entre_digitos_fica_so_na_grafia() {
+    assert_eq!(
+        kinds("1_000 0xFF_FF 0b1010_0000 1_2_3 0_1"),
+        [
+            "int10:1000",
+            "int16:FFFF",
+            "int2:10100000",
+            "int10:123",
+            "int10:01",
+            "NL",
+            "EOF"
+        ]
+    );
+    assert_eq!(tokenize("0xFF_FF").unwrap()[0].lexeme, "0xFF_FF");
+}
+
+#[test]
+fn separador_fora_do_lugar_aponta_o_sublinhado() {
+    let separator = |source: &str| {
+        let (message, line, column) = error_at(source);
+        assert!(
+            message.contains("o separador '_' só pode ficar entre dois dígitos"),
+            "{source}: {message}"
+        );
+        (line, column)
+    };
+    assert_eq!(separator("1__000"), (1, 2));
+    assert_eq!(separator("1000_"), (1, 5));
+    assert_eq!(separator("0x_FF"), (1, 3));
+    assert_eq!(separator("0b1_"), (1, 4));
+    assert_eq!(separator("x = 7__"), (1, 6));
+    // '_' sozinho no início não é um número: é o começo de um identificador.
+    assert_eq!(kinds("_1"), ["id:_1", "NL", "EOF"]);
+}
+
+#[test]
+fn o_erro_aponta_o_primeiro_problema_do_literal() {
+    // Um separador entre um dígito e um caractere inválido não é o problema: o
+    // caractere é.
+    let (message, line, column) = error_at("1_x");
+    assert_eq!((line, column), (1, 3));
+    assert!(message.contains("'x' não é um dígito decimal"), "{message}");
+    let (message, line, column) = error_at("0b1_2");
+    assert_eq!((line, column), (1, 5));
+    assert!(message.contains("binário"), "{message}");
+    // Com os dois problemas, vale o que vem primeiro.
+    let (message, line, column) = error_at("0__x");
+    assert_eq!((line, column), (1, 2));
+    assert!(message.contains("separador '_'"), "{message}");
+    let (message, line, column) = error_at("0x_G");
+    assert_eq!((line, column), (1, 3));
+    assert!(message.contains("separador '_'"), "{message}");
+    let (message, line, column) = error_at("1x__0");
+    assert_eq!((line, column), (1, 2));
+    assert!(message.contains("'x' não é um dígito decimal"), "{message}");
 }
 
 #[test]

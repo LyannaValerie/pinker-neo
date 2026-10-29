@@ -67,6 +67,7 @@ Uma linha por token: a posição (`linha:coluna`), o tipo e a grafia exata no c�
   reservada, um `INTEIRO` precisa ter prefixo e dígitos válidos, um `TEXTO` precisa ter
   aspas e escapes válidos.
 - A anotação `(base N)` dos inteiros é só informativa; a base vem do prefixo.
+- A grafia de um `INTEIRO` mantém o separador de dígitos: `0xFF_FF`.
 - O último token precisa ser `FIM`, e nada pode vir depois dele.
 
 O parser confere a estrutura: um `.t` editado com tokens fora de ordem gera os mesmos
@@ -99,8 +100,8 @@ começa na coluna seguinte à da posição, que ocupa pelo menos 8 caracteres.
   repetem o tipo, a mutabilidade nem a posição do nome: isso fica na tabela de símbolos
   (abaixo). As chamadas apontam para as funções pelo nome.
 - Os textos usam os escapes da Pinker (`\n`, `\t`, `\\`, `\"`).
-- Os inteiros do `.a` são escritos com o prefixo da base (`0x03`); os do `.s`, como valor
-  decimal (`-1`).
+- Os inteiros do `.a` são escritos com o prefixo da base e sem o separador de dígitos
+  (`0xFF_FF` vira `0xFFFF`); os do `.s`, como valor decimal (`-1`).
 
 ## `.s`: a tabela de símbolos e a árvore
 

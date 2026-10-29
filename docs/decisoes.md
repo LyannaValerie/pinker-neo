@@ -40,6 +40,10 @@ arquivos `.pk`, as âncoras de navegação usam essa sintaxe: `# pink-nav: start
 
 - **Inteiros:** decimal, hexadecimal (`0xFF`) e binário (`0b1010`). Um prefixo sem
   dígitos, como `0x`, é erro.
+- **Separador de dígitos:** `_` pode separar dígitos em qualquer base, para facilitar a
+  leitura: `1_000_000`, `0xFF_FF`, `0b1010_0000`. Ele não muda o valor e só pode ficar
+  entre dois dígitos: no início (inclusive logo depois do prefixo, como em `0x_FF`), no
+  fim (`100_`) ou repetido (`1__0`), é erro.
 - **Texto:** entre aspas duplas, com os escapes `\n`, `\t`, `\\` e `\"`. Um escape
   desconhecido é erro.
 - **Lógicos:** `true` e `false`.

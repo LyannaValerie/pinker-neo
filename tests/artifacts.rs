@@ -43,7 +43,7 @@ fun conta(limite: i32,)
 fun main()
     let minimo = -9223372036854775808
     let mascara: u8 = 0XfF
-    let bits = 0b1010
+    let bits = 0b10_10
     let largo: i64 = morph(mascara)
     say(fatorial(10))
     say(classifica(-3))
@@ -161,6 +161,8 @@ fn tokens_invalidos() {
     assert_eq!(read("1:1 FIM\n1:2 FIM\n").1, "token depois de FIM");
     assert!(read("x:1 FIM\n").1.contains("posição inválida"));
     assert!(read("1:1 INTEIRO 0xZ\n").1.contains("literal inválido"));
+    let (_, message) = read("1:1 INTEIRO 1__0\n");
+    assert!(message.contains("separador '_'"), "{message}");
     assert!(read("1:1 TEXTO 12\n").1.contains("não é um TEXTO"));
     assert!(read("1:1 QUEBRA x\n").1.contains("não tem lexema"));
 }
