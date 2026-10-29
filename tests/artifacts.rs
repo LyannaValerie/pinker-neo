@@ -117,8 +117,8 @@ fn programa_completo_executa() {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Erros de formato: cabeçalho, tokens inválidos, árvore malformada e numeração de variáveis do .s.
-// pink-keywords: teste, erro de formato, cabeçalho, versão, token, indentação, variável, função
+// pink-resume: Erros de formato: cabeçalho, tokens inválidos, árvore malformada, seções do .s e a árvore que discorda da tabela de símbolos.
+// pink-keywords: teste, erro de formato, cabeçalho, versão, token, indentação, variável, função, tabela de símbolos, seção
 fn format_error<T: std::fmt::Debug>(result: Result<T, artifact::FormatError>) -> (usize, String) {
     let e = result.expect_err("a leitura deveria falhar");
     (e.line, e.message)
@@ -129,6 +129,9 @@ fn cabecalho_invalido() {
     assert_eq!(artifact::detect("fun main()\n").unwrap(), None);
     let (_, message) = format_error(artifact::detect("# pinker tokens 2 · fonte: a.pk\n"));
     assert!(message.contains("versão '2'"), "{message}");
+    // O .s ganhou a tabela de símbolos na versão 2; a versão 1 não é mais lida.
+    let (_, message) = format_error(artifact::detect("# pinker semantic 1 · fonte: a.pk\n"));
+    assert!(message.contains("lê a versão 2"), "{message}");
     let (_, message) = format_error(artifact::detect("# pinker bytecode 1 · fonte: a.pk\n"));
     assert!(
         message.contains("formato desconhecido 'bytecode'"),
@@ -202,29 +205,132 @@ fn arvore_malformada() {
     );
 }
 
+/// Um .s com a tabela de `main` e a árvore dada para ela.
+fn semantic(variables: &str, tree: &str) -> String {
+    format!(
+        "# pinker semantic 2 · fonte: a.pk\n[funções]\nmain  1:5  ()\n\n[variáveis main]\n{variables}\n[árvore]\n1:1      Função main\n2:5        Bloco\n{tree}"
+    )
+}
+
 #[test]
-fn variaveis_e_funcoes_do_s_precisam_existir() {
-    let header = "# pinker semantic 1 · fonte: a.pk\n";
-    let read = |body: &str| format_error(checked::read(&format!("{header}{body}")));
-    let main = "1:1      Função main\n2:5        Bloco\n";
-    let (_, message) = read(&format!(
-        "{main}2:5          Let x#1@2:9: i64\n2:13           Inteiro 1: i64\n"
-    ));
+fn arvore_precisa_concordar_com_a_tabela() {
+    let read =
+        |variables: &str, tree: &str| format_error(checked::read(&semantic(variables, tree)));
+    let let_x = "2:5          Let x#0\n2:13           Inteiro 1: i64\n";
+    assert!(checked::read(&semantic("0  x  i64  2:9  let\n", let_x)).is_ok());
+
+    let (line, message) = read("0  x  i64  2:9  let\n1  y  i64  3:9  let\n", let_x);
+    assert_eq!(line, 7);
     assert!(
-        message.contains("a variável #0 de 'main' não é declarada"),
+        message.contains("a variável #1 de 'main' está na tabela, mas a árvore não a declara"),
         "{message}"
     );
-    let (_, message) = read(&format!(
-        "{main}2:5          Let x#0@2:9: i64\n2:13           Inteiro 1: i64\n3:5          Chamada say (predefinida)\n3:9            Variável y#0: i64\n"
-    ));
+    let (line, message) = read("", let_x);
+    assert_eq!(line, 10);
+    assert!(
+        message.contains("#0 não está na tabela de 'main'"),
+        "{message}"
+    );
+    let (_, message) = read(
+        "0  x  i64  2:9  let\n",
+        &format!(
+            "{let_x}3:5          Chamada say (predefinida)\n3:9            Variável y#0: i64\n"
+        ),
+    );
     assert!(message.contains("se chama 'x', não 'y'"), "{message}");
-    let (_, message) = read(&format!("{main}2:5          Chamada sumida\n"));
+    let (_, message) = read("0  x  i64  2:9  parâmetro\n", let_x);
+    assert!(message.contains("é um parâmetro na tabela"), "{message}");
+    let (_, message) = read(
+        "0  x  i64  2:9  let\n",
+        &format!("{let_x}{}", let_x.replace("2:", "3:")),
+    );
+    assert!(message.contains("declarada mais de uma vez"), "{message}");
+    let (_, message) = read("0  x  i64  2:9  let\n", "2:5          Chamada sumida\n");
     assert!(
         message.contains("a função 'sumida' não existe"),
         "{message}"
     );
-    let (_, message) = read("1:1      Função f\n2:5        Bloco\n2:5          Give\n");
+}
+
+#[test]
+fn tabela_de_simbolos_malformada() {
+    let read = |variables: &str| {
+        let tree = "2:5          Let x#0\n2:13           Inteiro 1: i64\n";
+        format_error(checked::read(&semantic(variables, tree)))
+    };
+    assert_eq!(
+        read("1  x  i64  2:9  let\n"),
+        (6, "esperava a variável #0, encontrei '1'".into())
+    );
+    assert!(
+        read("0  x  i64  2:9  let mutável\n")
+            .1
+            .contains("espécie desconhecida 'let mutável'")
+    );
+    assert!(
+        read("0  x  real  2:9  let\n")
+            .1
+            .contains("tipo desconhecido 'real'")
+    );
+    assert!(read("0  x  i64  2-9  let\n").1.contains("posição inválida"));
+
+    let file = |body: &str| {
+        format_error(checked::read(&format!(
+            "# pinker semantic 2 · fonte: a.pk\n{body}"
+        )))
+    };
+    assert_eq!(
+        file("1:1      Função main\n"),
+        (2, "esperava a seção [funções]".into())
+    );
+    assert!(
+        file("[funções]\nmain  1:5  ()\n")
+            .1
+            .contains("falta a seção [árvore]")
+    );
+    assert!(
+        file("[funções]\nmain  1:5  ()\n[árvore]\n")
+            .1
+            .contains("falta a seção [variáveis main]")
+    );
+    assert!(
+        file("[funções]\nmain  1:5  ()\n[variáveis f]\n[árvore]\n")
+            .1
+            .contains("esperava a seção [variáveis main]")
+    );
+    assert!(
+        file("[funções]\n[árvore]\n[variáveis main]\n")
+            .1
+            .contains("desconhecida ou fora de ordem")
+    );
+    assert!(
+        file("[funções]\nmain  1:5  i64\n[variáveis main]\n[árvore]\n")
+            .1
+            .contains("esperava 'nome  linha:coluna")
+    );
+    let (_, message) = file(
+        "[funções]\nf  1:5  ()\n[variáveis f]\n[árvore]\n1:1      Função f\n2:5        Bloco\n2:5          Give\n",
+    );
     assert!(message.contains("não tem uma função 'main'"), "{message}");
+}
+
+#[test]
+fn assinatura_da_tabela_e_ordem_das_funcoes() {
+    let source = "fun f(a: u8) -> u8\n    give a\n\nfun main()\n    say(f(1))\n";
+    let content = checked::render(&checked_program(source), "c.pk");
+    let read = |from: &str, to: &str| {
+        assert!(content.contains(from), "{content}");
+        format_error(checked::read(&content.replacen(from, to, 1))).1
+    };
+    let message = read("(u8) -> u8", "(u8, u8) -> u8");
+    assert!(
+        message.contains("a assinatura de 'f' diz (u8, u8), mas os parâmetros na árvore são (u8)"),
+        "{message}"
+    );
+    let message = read("1:1      Função f\n", "1:1      Função g\n");
+    assert!(message.contains("esperava a função 'f'"), "{message}");
+    let message = read("f      1:5", "main   1:5");
+    assert!(message.contains("função 'main' repetida"), "{message}");
 }
 // pink-nav: end
 
@@ -282,7 +388,18 @@ fn verificador_recusa_funcao_que_chega_ao_fim_sem_resultado() {
 #[test]
 fn verificador_recusa_atribuicao_a_imutavel() {
     let source = "fun main()\n    let mut x = 1\n    x = 2\n";
-    let message = tampered(source, "Let mut x#0", "Let x#0");
+    // A mutabilidade vem da tabela de símbolos: tirar o `mut` dela muda o programa lido.
+    let message = tampered(source, "let mut\n", "let\n");
     assert!(message.contains("imutável"), "{message}");
+}
+
+#[test]
+fn verificador_usa_o_tipo_da_tabela() {
+    let source = "fun main()\n    let x: u8 = 1\n    say(x)\n";
+    let message = tampered(source, "x     u8    2:9", "x     bool  2:9");
+    assert!(
+        message.contains("esperava bool, a expressão é u8"),
+        "{message}"
+    );
 }
 // pink-nav: end

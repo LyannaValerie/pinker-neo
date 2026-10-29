@@ -9,8 +9,8 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::artifact::{
-    Format, FormatError, TreeLine, TreeReader, format_error, header, identifier, literal,
-    parse_position, split_word, tree_line,
+    Format, FormatError, TreeLine, TreeReader, content_lines, format_error, header, identifier,
+    literal, parse_position, split_field, split_word, tree_line,
 };
 use crate::ast::{BinaryOperator, UnaryOperator};
 use crate::token::{Position, TokenKind, quote_text};
@@ -157,7 +157,10 @@ pub struct CheckedFunction {
     /// Todas as variáveis da função (parâmetros e locais); os usos apontam para cá.
     pub variables: Vec<Variable>,
     pub body: CheckedBlock,
+    /// Posição do `fun`, onde a função começa.
     pub position: Position,
+    /// Posição do nome: é a declaração que a tabela de símbolos registra.
+    pub name_position: Position,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -298,14 +301,17 @@ pub fn breaks_out(block: &CheckedBlock) -> bool {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Grava a árvore verificada no formato .s (saída de --emit=semantic), com tipos e variáveis numeradas.
-// pink-keywords: emit, render, formatação, saída, semantic, tipos, vínculos, arquivo .s
-/// O arquivo `.s`: uma linha por nó, como no `.a`, com o tipo de cada expressão. Cada
-/// variável aparece como `nome#n`, em que `n` identifica a declaração dentro da função;
-/// a declaração (`Parâmetro` ou `Let`) traz também o tipo e a posição do nome.
+// pink-resume: Grava a árvore verificada no formato .s (saída de --emit=semantic): a tabela de símbolos e a árvore com tipos.
+// pink-keywords: emit, render, formatação, saída, semantic, tipos, vínculos, arquivo .s, tabela de símbolos
+/// O arquivo `.s` tem três partes. Primeiro, a tabela de símbolos: `[funções]`, com a
+/// assinatura de cada função, e uma seção `[variáveis <função>]` por função, com cada
+/// variável pelo número. Depois, `[árvore]`: uma linha por nó, como no `.a`, com o tipo
+/// de cada expressão. A árvore se refere às variáveis por `nome#n` e às funções pelo
+/// nome, e consulta a tabela para saber o tipo, a mutabilidade e a posição de cada uma.
 pub fn render(program: &CheckedProgram, source: &str) -> String {
     let mut output = header(Format::Semantic, source);
-    output.push_str("#POSIÇÃO NÓ\n");
+    render_symbols(&mut output, program);
+    output.push_str("\n[árvore]\n#POSIÇÃO NÓ\n");
     let mut renderer = Renderer {
         program,
         variables: &[],
@@ -315,6 +321,63 @@ pub fn render(program: &CheckedProgram, source: &str) -> String {
         renderer.function(function);
     }
     renderer.output
+}
+
+/// A tabela de símbolos. As colunas são alinhadas só para leitura; a última de cada linha
+/// vai até o fim dela, porque pode ter espaços.
+fn render_symbols(output: &mut String, program: &CheckedProgram) {
+    let width = |title: &str, values: &mut dyn Iterator<Item = usize>| {
+        values.fold(title.chars().count(), usize::max)
+    };
+    let position = |position: Position| format!("{}:{}", position.line, position.column);
+
+    let name_width = width("#NOME", &mut program.functions.iter().map(|f| f.name.len()));
+    output.push_str("[funções]\n");
+    output.push_str(&format!(
+        "{:<name_width$}  DECLARAÇÃO  ASSINATURA\n",
+        "#NOME"
+    ));
+    for function in &program.functions {
+        let parameters: Vec<String> = function
+            .parameters
+            .iter()
+            .map(|&index| function.variables[index].ty.to_string())
+            .collect();
+        let result = match function.result {
+            Some(ty) => format!(" -> {ty}"),
+            None => String::new(),
+        };
+        output.push_str(&format!(
+            "{:<name_width$}  {:<10}  ({}){result}\n",
+            function.name,
+            position(function.name_position),
+            parameters.join(", ")
+        ));
+    }
+
+    for function in &program.functions {
+        let variables = &function.variables;
+        let number_width = width("#N", &mut (0..variables.len()).map(|n| n.to_string().len()));
+        let name_width = width("NOME", &mut variables.iter().map(|v| v.name.len()));
+        output.push_str(&format!("\n[variáveis {}]\n", function.name));
+        output.push_str(&format!(
+            "{:<number_width$}  {:<name_width$}  TIPO  DECLARAÇÃO  ESPÉCIE\n",
+            "#N", "NOME"
+        ));
+        for (index, variable) in variables.iter().enumerate() {
+            let kind = match (variable.parameter, variable.mutable) {
+                (true, _) => "parâmetro",
+                (false, false) => "let",
+                (false, true) => "let mut",
+            };
+            output.push_str(&format!(
+                "{index:<number_width$}  {:<name_width$}  {:<4}  {:<10}  {kind}\n",
+                variable.name,
+                variable.ty.to_string(),
+                position(variable.position)
+            ));
+        }
+    }
 }
 
 struct Renderer<'a> {
@@ -334,19 +397,10 @@ impl<'a> Renderer<'a> {
 
     fn function(&mut self, function: &'a CheckedFunction) {
         self.variables = &function.variables;
-        let result = match function.result {
-            Some(ty) => format!(" -> {ty}"),
-            None => String::new(),
-        };
-        self.line(
-            function.position,
-            0,
-            &format!("Função {}{result}", function.name),
-        );
+        self.line(function.position, 0, &format!("Função {}", function.name));
         for &index in &function.parameters {
-            let variable = &function.variables[index];
-            let text = format!("Parâmetro {}: {}", self.variable(index), variable.ty);
-            self.line(variable.position, 1, &text);
+            let text = format!("Parâmetro {}", self.variable(index));
+            self.line(function.variables[index].position, 1, &text);
         }
         self.block(&function.body, 1);
     }
@@ -362,15 +416,7 @@ impl<'a> Renderer<'a> {
         let position = statement.position;
         match &statement.kind {
             CheckedStatementKind::Let { variable, value } => {
-                let declared = &self.variables[*variable];
-                let mutable = if declared.mutable { "mut " } else { "" };
-                let text = format!(
-                    "Let {mutable}{}@{}:{}: {}",
-                    self.variable(*variable),
-                    declared.position.line,
-                    declared.position.column,
-                    declared.ty
-                );
+                let text = format!("Let {}", self.variable(*variable));
                 self.line(position, depth, &text);
                 self.expression(value, depth + 1);
             }
@@ -474,40 +520,249 @@ impl<'a> Renderer<'a> {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Lê um arquivo .s de volta para a árvore verificada: funções por nome, variáveis numeradas e tipos anotados.
-// pink-keywords: read, leitura, arquivo .s, árvore verificada, variável, tipo, chamada
-/// Lê um arquivo `.s` (sem conferir o cabeçalho, que `artifact::detect` já leu). Confere a
-/// forma e a numeração das variáveis; a coerência dos tipos e do fluxo fica para o
-/// verificador (`verifier::verify`), que precisa rodar antes do interpretador.
+// pink-resume: Lê um arquivo .s de volta para a árvore verificada: a tabela de símbolos e a árvore que a consulta.
+// pink-keywords: read, leitura, arquivo .s, árvore verificada, tabela de símbolos, seção, variável, tipo, chamada
+/// Lê um arquivo `.s` (sem conferir o cabeçalho, que `artifact::detect` já leu). As
+/// funções e as variáveis vêm da tabela de símbolos; a árvore precisa concordar com ela.
+/// Confere a forma, as seções e os vínculos entre a árvore e a tabela; a coerência dos
+/// tipos e do fluxo fica para o verificador (`verifier::verify`), que precisa rodar antes
+/// do interpretador.
 pub fn read(content: &str) -> Result<CheckedProgram, FormatError> {
-    let mut reader = TreeReader::new(content)?;
-    // As chamadas apontam para as funções pelo nome; primeiro, os nomes de todas.
+    let sections = sections(content)?;
+    let mut symbols = Vec::new();
     let mut functions_by_name = HashMap::new();
-    for line in reader.lines().iter().filter(|line| line.depth == 0) {
-        let text = split_word(line.text).1;
-        let name = text.split_once(" -> ").map_or(text, |(name, _)| name);
+    for &(line, text) in &sections.functions {
+        let symbol = function_symbol(line, text)?;
         if functions_by_name
-            .insert(name.to_string(), functions_by_name.len())
+            .insert(symbol.name.clone(), symbols.len())
             .is_some()
         {
-            return Err(format_error(line.line, format!("função '{name}' repetida")));
+            return Err(format_error(
+                line,
+                format!("função '{}' repetida", symbol.name),
+            ));
         }
+        symbols.push(symbol);
     }
+
+    // Uma seção de variáveis por função, na ordem da tabela de funções.
+    let mut tables = Vec::new();
+    for (index, (line, name, rows)) in sections.variables.iter().enumerate() {
+        match symbols.get(index) {
+            Some(symbol) if symbol.name == *name => {}
+            Some(symbol) => {
+                return Err(format_error(
+                    *line,
+                    format!(
+                        "esperava a seção [variáveis {}], na ordem da tabela de funções",
+                        symbol.name
+                    ),
+                ));
+            }
+            None => {
+                return Err(format_error(
+                    *line,
+                    format!("a função '{name}' não está na tabela de funções"),
+                ));
+            }
+        }
+        let table = rows
+            .iter()
+            .enumerate()
+            .map(|(index, &(line, text))| Ok((line, variable_symbol(index, line, text)?)))
+            .collect::<Result<Vec<_>, FormatError>>()?;
+        tables.push(table);
+    }
+    if let Some(symbol) = symbols.get(tables.len()) {
+        return Err(format_error(
+            sections.tree_title,
+            format!("falta a seção [variáveis {}]", symbol.name),
+        ));
+    }
+
+    let mut reader = TreeReader::from_lines(sections.tree)?;
     let mut functions = Vec::new();
-    while let Some(line) = reader.child(0)? {
+    for (symbol, table) in symbols.iter().zip(tables) {
+        let line = reader.child(0)?.ok_or_else(|| {
+            format_error(
+                sections.tree_title,
+                format!("falta a função '{}' na árvore", symbol.name),
+            )
+        })?;
+        let (rows, variables): (Vec<usize>, Vec<Variable>) = table.into_iter().unzip();
         let function = FunctionReader {
             reader: &mut reader,
             functions: &functions_by_name,
-            variables: Vec::new(),
-            references: Vec::new(),
+            symbol,
+            declared: vec![false; variables.len()],
+            rows,
+            variables,
         }
         .function(line)?;
         functions.push(function);
+    }
+    if let Some(line) = reader.child(0)? {
+        return Err(format_error(
+            line.line,
+            format!(
+                "a árvore tem uma função a mais que a tabela: '{}'",
+                line.text
+            ),
+        ));
     }
     let main = *functions_by_name
         .get("main")
         .ok_or_else(|| format_error(1, "o programa não tem uma função 'main'"))?;
     Ok(CheckedProgram { functions, main })
+}
+
+type Lines<'a> = Vec<(usize, &'a str)>;
+
+/// As linhas de cada seção, sem comentários e sem linhas em branco.
+struct Sections<'a> {
+    functions: Lines<'a>,
+    /// Uma por seção `[variáveis <função>]`: a linha do título, o nome e as linhas.
+    variables: Vec<(usize, &'a str, Lines<'a>)>,
+    /// A linha do título `[árvore]`.
+    tree_title: usize,
+    tree: Lines<'a>,
+}
+
+/// Separa as seções. A ordem é fixa: `[funções]`, as `[variáveis <função>]` e `[árvore]`.
+fn sections(content: &str) -> Result<Sections<'_>, FormatError> {
+    #[derive(PartialEq)]
+    enum Section {
+        None,
+        Functions,
+        Variables,
+        Tree,
+    }
+    let mut sections = Sections {
+        functions: Vec::new(),
+        variables: Vec::new(),
+        tree_title: 0,
+        tree: Vec::new(),
+    };
+    let mut current = Section::None;
+    for (line, text) in content_lines(content) {
+        if let Some(title) = text
+            .trim_end()
+            .strip_prefix('[')
+            .and_then(|t| t.strip_suffix(']'))
+        {
+            let started = matches!(current, Section::Functions | Section::Variables);
+            match title.strip_prefix("variáveis ") {
+                _ if title == "funções" && current == Section::None => {
+                    current = Section::Functions;
+                }
+                _ if title == "árvore" && started => {
+                    sections.tree_title = line;
+                    current = Section::Tree;
+                }
+                Some(name) if started => {
+                    sections.variables.push((line, name, Vec::new()));
+                    current = Section::Variables;
+                }
+                _ => {
+                    return Err(format_error(
+                        line,
+                        format!(
+                            "seção '[{title}]' desconhecida ou fora de ordem; a ordem é [funções], [variáveis <função>] e [árvore]"
+                        ),
+                    ));
+                }
+            }
+            continue;
+        }
+        match current {
+            Section::None => return Err(format_error(line, "esperava a seção [funções]")),
+            Section::Functions => sections.functions.push((line, text)),
+            Section::Variables => {
+                let last = sections.variables.last_mut().expect("seção aberta");
+                last.2.push((line, text));
+            }
+            Section::Tree => sections.tree.push((line, text)),
+        }
+    }
+    if current != Section::Tree {
+        let last = content.lines().count().max(1);
+        return Err(format_error(last, "falta a seção [árvore]"));
+    }
+    Ok(sections)
+}
+
+/// Uma linha da tabela de funções.
+struct FunctionSymbol {
+    name: String,
+    position: Position,
+    parameters: Vec<Type>,
+    result: Option<Type>,
+    line: usize,
+}
+
+/// `nome  linha:coluna  (tipo, tipo) -> resultado`; sem resultado, termina no `)`.
+fn function_symbol(line: usize, text: &str) -> Result<FunctionSymbol, FormatError> {
+    let invalid = || format_error(line, "esperava 'nome  linha:coluna  (tipos) -> resultado'");
+    let (name, rest) = split_field(text);
+    let (position, signature) = split_field(rest);
+    let (parameters, result) = signature
+        .strip_prefix('(')
+        .and_then(|signature| signature.split_once(')'))
+        .ok_or_else(invalid)?;
+    let parameters = match parameters.trim() {
+        "" => Vec::new(),
+        list => list
+            .split(',')
+            .map(|ty| parse_type(ty.trim(), line))
+            .collect::<Result<_, _>>()?,
+    };
+    let result = match result.trim() {
+        "" => None,
+        arrow => {
+            let ty = arrow.strip_prefix("->").ok_or_else(invalid)?;
+            Some(parse_type(ty.trim(), line)?)
+        }
+    };
+    Ok(FunctionSymbol {
+        name: identifier(name, line)?.to_string(),
+        position: parse_position(position, line)?,
+        parameters,
+        result,
+        line,
+    })
+}
+
+/// `n  nome  tipo  linha:coluna  espécie`, em que `n` precisa ser o número da linha na
+/// seção, a partir de 0, e a espécie é `parâmetro`, `let` ou `let mut`.
+fn variable_symbol(index: usize, line: usize, text: &str) -> Result<Variable, FormatError> {
+    let (number, rest) = split_field(text);
+    let (name, rest) = split_field(rest);
+    let (ty, rest) = split_field(rest);
+    let (position, kind) = split_field(rest);
+    if number != index.to_string() {
+        return Err(format_error(
+            line,
+            format!("esperava a variável #{index}, encontrei '{number}'"),
+        ));
+    }
+    let (parameter, mutable) = match kind.trim_end() {
+        "parâmetro" => (true, false),
+        "let" => (false, false),
+        "let mut" => (false, true),
+        kind => {
+            return Err(format_error(
+                line,
+                format!("espécie desconhecida '{kind}'; as espécies são parâmetro, let e let mut"),
+            ));
+        }
+    };
+    Ok(Variable {
+        name: identifier(name, line)?.to_string(),
+        ty: parse_type(ty, line)?,
+        mutable,
+        parameter,
+        position: parse_position(position, line)?,
+    })
 }
 
 fn parse_type(text: &str, line: usize) -> Result<Type, FormatError> {
@@ -525,20 +780,26 @@ fn variable_reference(text: &str, line: usize) -> Result<(&str, usize), FormatEr
 struct FunctionReader<'r, 'a> {
     reader: &'r mut TreeReader<'a>,
     functions: &'r HashMap<String, usize>,
-    /// As declarações, pelo número; todas precisam aparecer.
-    variables: Vec<Option<Variable>>,
-    /// Usos de variáveis (número, nome, linha), conferidos com as declarações no fim.
-    references: Vec<(usize, String, usize)>,
+    symbol: &'r FunctionSymbol,
+    /// As variáveis da tabela, pelo número, e a linha de cada uma na tabela.
+    variables: Vec<Variable>,
+    rows: Vec<usize>,
+    /// Quais variáveis já têm a sua declaração (`Parâmetro` ou `Let`) na árvore.
+    declared: Vec<bool>,
 }
 
 impl<'a> FunctionReader<'_, 'a> {
     fn function(mut self, line: TreeLine<'a>) -> Result<CheckedFunction, FormatError> {
-        let text = expect_word(&line, "Função")?;
-        let (name, result) = match text.split_once(" -> ") {
-            Some((name, result)) => (name, Some(parse_type(result, line.line)?)),
-            None => (text, None),
-        };
-        let name = identifier(name, line.line)?.to_string();
+        let name = expect_word(&line, "Função")?;
+        if name != self.symbol.name {
+            return Err(format_error(
+                line.line,
+                format!(
+                    "esperava a função '{}', na ordem da tabela de funções; encontrei '{name}'",
+                    self.symbol.name
+                ),
+            ));
+        }
         let mut parameters = Vec::new();
         while self
             .reader
@@ -547,82 +808,89 @@ impl<'a> FunctionReader<'_, 'a> {
         {
             let child = self.reader.child(1)?.expect("peek_child confirmou a linha");
             let text = expect_word(&child, "Parâmetro")?;
-            let (reference, ty) = text
-                .split_once(": ")
-                .ok_or_else(|| format_error(child.line, "esperava 'Parâmetro nome#n: tipo'"))?;
-            let ty = parse_type(ty, child.line)?;
-            let index = self.declare(reference, ty, false, true, child.position, child.line)?;
-            parameters.push(index);
+            parameters.push(self.declare(text, true, child.line)?);
         }
         let body = self.reader.expect_child(1, "o bloco da função", &line)?;
         let body = self.block(body, 1)?;
         self.reader.end(1)?;
 
-        let mut variables = Vec::new();
-        for (index, variable) in self.variables.into_iter().enumerate() {
-            variables.push(variable.ok_or_else(|| {
-                format_error(
-                    line.line,
-                    format!("a variável #{index} de '{name}' não é declarada"),
-                )
-            })?);
+        if let Some(index) = self.declared.iter().position(|declared| !declared) {
+            return Err(format_error(
+                self.rows[index],
+                format!(
+                    "a variável #{index} de '{name}' está na tabela, mas a árvore não a declara"
+                ),
+            ));
         }
-        for (index, reference, at) in self.references {
-            let declared = variables.get(index).ok_or_else(|| {
-                format_error(at, format!("a variável #{index} não existe em '{name}'"))
-            })?;
-            if declared.name != reference {
-                return Err(format_error(
-                    at,
-                    format!(
-                        "a variável #{index} se chama '{}', não '{reference}'",
-                        declared.name
-                    ),
-                ));
-            }
+        let types: Vec<Type> = parameters.iter().map(|&i| self.variables[i].ty).collect();
+        if types != self.symbol.parameters {
+            let list = |types: &[Type]| {
+                let names: Vec<String> = types.iter().map(Type::to_string).collect();
+                names.join(", ")
+            };
+            return Err(format_error(
+                self.symbol.line,
+                format!(
+                    "a assinatura de '{name}' diz ({}), mas os parâmetros na árvore são ({})",
+                    list(&self.symbol.parameters),
+                    list(&types)
+                ),
+            ));
         }
         Ok(CheckedFunction {
-            name,
+            name: name.to_string(),
             parameters,
-            result,
-            variables,
+            result: self.symbol.result,
+            variables: self.variables,
             body,
             position: line.position,
+            name_position: self.symbol.position,
         })
     }
 
-    fn declare(
-        &mut self,
-        reference: &str,
-        ty: Type,
-        mutable: bool,
-        parameter: bool,
-        position: Position,
-        line: usize,
-    ) -> Result<usize, FormatError> {
-        let (name, index) = variable_reference(reference, line)?;
-        if index >= self.variables.len() {
-            self.variables.resize(index + 1, None);
+    /// A declaração de uma variável na árvore: precisa ter a espécie da tabela e aparecer
+    /// uma vez só.
+    fn declare(&mut self, text: &str, parameter: bool, line: usize) -> Result<usize, FormatError> {
+        let index = self.reference(text, line)?;
+        if self.variables[index].parameter != parameter {
+            let message = if parameter {
+                format!("a variável #{index} não é um parâmetro na tabela")
+            } else {
+                format!("a variável #{index} é um parâmetro na tabela; declare-a com Parâmetro")
+            };
+            return Err(format_error(line, message));
         }
-        if self.variables[index].is_some() {
+        if self.declared[index] {
             return Err(format_error(
                 line,
                 format!("a variável #{index} é declarada mais de uma vez"),
             ));
         }
-        self.variables[index] = Some(Variable {
-            name: name.to_string(),
-            ty,
-            mutable,
-            parameter,
-            position,
-        });
+        self.declared[index] = true;
         Ok(index)
     }
 
+    /// Um `nome#n` da árvore: o número precisa existir na tabela, com o mesmo nome.
     fn reference(&mut self, text: &str, line: usize) -> Result<usize, FormatError> {
         let (name, index) = variable_reference(text, line)?;
-        self.references.push((index, name.to_string(), line));
+        let declared = self.variables.get(index).ok_or_else(|| {
+            format_error(
+                line,
+                format!(
+                    "a variável #{index} não está na tabela de '{}'",
+                    self.symbol.name
+                ),
+            )
+        })?;
+        if declared.name != name {
+            return Err(format_error(
+                line,
+                format!(
+                    "a variável #{index} se chama '{}', não '{name}'",
+                    declared.name
+                ),
+            ));
+        }
         Ok(index)
     }
 
@@ -660,17 +928,7 @@ impl<'a> FunctionReader<'_, 'a> {
         let (word, rest) = split_word(line.text);
         let kind = match word {
             "Let" => {
-                let (mutable, rest) = match rest.strip_prefix("mut ") {
-                    Some(rest) => (true, rest),
-                    None => (false, rest),
-                };
-                let invalid =
-                    || format_error(line.line, "esperava 'Let nome#n@linha:coluna: tipo'");
-                let (declaration, ty) = rest.split_once(": ").ok_or_else(invalid)?;
-                let (reference, position) = declaration.split_once('@').ok_or_else(invalid)?;
-                let position = parse_position(position, line.line)?;
-                let ty = parse_type(ty, line.line)?;
-                let variable = self.declare(reference, ty, mutable, false, position, line.line)?;
+                let variable = self.declare(rest, false, line.line)?;
                 let value = self.expect_expression(&line, child)?;
                 CheckedStatementKind::Let { variable, value }
             }

@@ -171,6 +171,7 @@ fn check_function(
         variables: checker.variables,
         body,
         position: function.position,
+        name_position: function.name.position,
     })
 }
 

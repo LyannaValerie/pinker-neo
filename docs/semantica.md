@@ -3,7 +3,9 @@
 As regras que a análise semântica (`src/semantic.rs`) verifica depois do parser. O
 resultado é a árvore verificada (`src/checked.rs`): o programa com os tipos resolvidos,
 cada uso de variável ligado à sua declaração e cada chamada ligada à função chamada. É a
-entrada do futuro interpretador. A análise para no primeiro erro.
+entrada do interpretador. No `.s`, a árvore vem acompanhada da tabela de símbolos: as
+funções com as suas assinaturas e as variáveis de cada função, com tipo, posição e
+espécie (ver [`arquivos.md`](arquivos.md)). A análise para no primeiro erro.
 
 ## Etapas
 

@@ -32,8 +32,9 @@ origem:
 ```
 
 - O formato é `tokens`, `ast` ou `semantic`.
-- A versão é a do formato; esta versão do `pinker` lê a versão 1. Um arquivo de outra
-  versão é recusado com uma mensagem clara.
+- A versão é a do formato, e cada formato tem a sua: esta versão do `pinker` lê `tokens`
+  1, `ast` 1 e `semantic` 2. Um arquivo de outra versão é recusado com uma mensagem
+  clara.
 - A fonte é o `.pk` de onde o arquivo veio. Os diagnósticos da linguagem das etapas
   seguintes apontam para ela. Ela é só uma origem declarada: como o resto do arquivo, pode
   ser editada, e nada confere se o arquivo corresponde ao `.pk` atual. Se o `.pk` mudou
@@ -42,7 +43,7 @@ origem:
   um `.pk` não deve começar com um comentário `# pinker ...`.
 
 Depois do cabeçalho, linhas que começam com `#` são comentários, e linhas em branco são
-ignoradas. A segunda linha de cada arquivo é um comentário com os nomes das colunas.
+ignoradas. Cada tabela começa com um comentário com os nomes das colunas.
 
 ## `.t`: tokens
 
@@ -93,12 +94,85 @@ começa na coluna seguinte à da posição, que ocupa pelo menos 8 caracteres.
   `Chamada`, os argumentos.
 - No `.a`, nomes e tipos levam a própria posição em `@linha:coluna`. A análise semântica
   usa essas posições nos diagnósticos.
-- No `.s`, cada expressão termina com o seu tipo (`: i64`), cada variável aparece como
-  `nome#n`, e as declarações trazem o tipo: `Parâmetro a#0: i64`, `Let mut n#1@5:9: u8`.
-  As chamadas apontam para as funções pelo nome.
+- No `.s`, cada expressão termina com o seu tipo (`: i64`) e cada variável aparece como
+  `nome#n`. As declarações (`Parâmetro a#0`, `Let n#1`) e as funções (`Função soma`) não
+  repetem o tipo, a mutabilidade nem a posição do nome: isso fica na tabela de símbolos
+  (abaixo). As chamadas apontam para as funções pelo nome.
 - Os textos usam os escapes da Pinker (`\n`, `\t`, `\\`, `\"`).
 - Os inteiros do `.a` são escritos com o prefixo da base (`0x03`); os do `.s`, como valor
   decimal (`-1`).
+
+## `.s`: a tabela de símbolos e a árvore
+
+A análise semântica guarda o que descobre de três maneiras, e o `.s` mostra as três:
+
+- **Atributos nos nós:** o tipo de cada expressão (`: i64`), preenchido depois do
+  parsing.
+- **Tabela de símbolos:** uma tabela à parte, consultada pelo identificador, que diz a
+  que cada nome se refere.
+- **Uma estrutura nova:** a árvore verificada, separada da AST, que expressa a semântica
+  mais diretamente: `int` já é `i64`, cada uso aponta para a sua declaração.
+
+O arquivo tem três seções, nesta ordem. Cada uma começa com o título entre colchetes:
+
+```text
+# pinker semantic 2 · fonte: ola.pk
+[funções]
+#NOME  DECLARAÇÃO  ASSINATURA
+soma   3:5         (i64, i64) -> i64
+main   6:5         ()
+
+[variáveis soma]
+#N  NOME  TIPO  DECLARAÇÃO  ESPÉCIE
+0   a     i64   3:10        parâmetro
+1   b     i64   3:18        parâmetro
+
+[variáveis main]
+#N  NOME   TIPO  DECLARAÇÃO  ESPÉCIE
+0   total  i64   7:9         let
+
+[árvore]
+#POSIÇÃO NÓ
+3:1      Função soma
+3:10       Parâmetro a#0
+3:18       Parâmetro b#1
+4:5        Bloco
+4:5          Give
+4:12           Binária +: i64
+4:10             Variável a#0: i64
+4:14             Variável b#1: i64
+6:1      Função main
+7:5        Bloco
+7:5          Let total#0
+...
+```
+
+- **`[funções]`:** uma linha por função, na ordem do programa: o nome, a posição do nome
+  no código-fonte e a assinatura, `(tipos dos parâmetros) -> resultado`. Sem resultado,
+  a assinatura termina no `)`. As chamadas da árvore são resolvidas por esta tabela.
+- **`[variáveis <função>]`:** uma seção por função, na mesma ordem da tabela de funções,
+  mesmo que a função não tenha variáveis. Uma linha por variável: o número, o nome, o
+  tipo, a posição do nome e a espécie (`parâmetro`, `let` ou `let mut`). O número é a
+  chave: começa em 0 e segue a ordem das linhas. Dois `let` com o mesmo nome (um
+  sombreando o outro) são duas linhas, com números diferentes.
+- **`[árvore]`:** as funções na mesma ordem da tabela. Um `nome#n` na árvore se refere à
+  linha `n` da tabela da função, e o nome precisa ser o da tabela.
+- As colunas são separadas por espaços, e o alinhamento é só para leitura. A última
+  coluna de cada linha (assinatura ou espécie) vai até o fim dela.
+
+A tabela é dado, não comentário: o tipo, a mutabilidade e a posição de uma variável vêm
+dela. Editar `let mut` para `let` faz o verificador recusar uma atribuição a essa
+variável; trocar o tipo faz ele recusar as expressões que não combinam com o tipo novo.
+
+A leitura confere que a árvore concorda com a tabela, e uma discordância é erro de
+formato, com a linha do arquivo:
+
+- a tabela de variáveis fora da ordem das funções, ou uma função sem a sua seção;
+- uma função da árvore fora da ordem da tabela, ou que não está nela;
+- um `nome#n` cujo número não está na tabela, ou cujo nome não é o da tabela;
+- uma variável da tabela que a árvore não declara, ou declara mais de uma vez;
+- um `Parâmetro` de uma variável que a tabela diz ser `let`, ou o contrário;
+- uma assinatura cujos tipos não são os dos parâmetros declarados na árvore.
 
 ## Diagnósticos
 

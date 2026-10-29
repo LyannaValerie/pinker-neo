@@ -410,16 +410,31 @@ fn caminhos_que_sempre_devolvem() {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Saída de --emit=semantic: tipos de cada nó e variáveis numeradas, mostrando o sombreamento.
-// pink-keywords: teste, emit, semantic, render, tipos, vínculos
+// pink-resume: Saída de --emit=semantic: a tabela de símbolos, os tipos de cada nó e as variáveis numeradas, mostrando o sombreamento.
+// pink-keywords: teste, emit, semantic, render, tipos, vínculos, tabela de símbolos
 #[test]
 fn render_mostra_tipos_e_vinculos() {
     let source = "fun dobro(n: u8) -> u8\n    give n * 2\n\nfun main()\n    let n = dobro(3)\n    if true\n        let n = -1\n        say(n)\n";
     let expected = "\
-# pinker semantic 1 · fonte: teste.pk
+# pinker semantic 2 · fonte: teste.pk
+[funções]
+#NOME  DECLARAÇÃO  ASSINATURA
+dobro  1:5         (u8) -> u8
+main   4:5         ()
+
+[variáveis dobro]
+#N  NOME  TIPO  DECLARAÇÃO  ESPÉCIE
+0   n     u8    1:11        parâmetro
+
+[variáveis main]
+#N  NOME  TIPO  DECLARAÇÃO  ESPÉCIE
+0   n     u8    5:9         let
+1   n     i64   7:13        let
+
+[árvore]
 #POSIÇÃO NÓ
-1:1      Função dobro -> u8
-1:11       Parâmetro n#0: u8
+1:1      Função dobro
+1:11       Parâmetro n#0
 2:5        Bloco
 2:5          Give
 2:12           Binária *: u8
@@ -427,13 +442,13 @@ fn render_mostra_tipos_e_vinculos() {
 2:14             Inteiro 2: u8
 4:1      Função main
 5:5        Bloco
-5:5          Let n#0@5:9: u8
+5:5          Let n#0
 5:13           Chamada dobro: u8
 5:19             Inteiro 3: u8
 6:5          If
 6:8            Lógico true: bool
 7:9            Bloco
-7:9              Let n#1@7:13: i64
+7:9              Let n#1
 7:17               Inteiro -1: i64
 8:9              Chamada say (predefinida)
 8:13               Variável n#1: i64

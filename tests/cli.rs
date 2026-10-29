@@ -196,10 +196,12 @@ fn emit_semantic_grava_a_arvore_verificada() {
         .unwrap();
     assert!(status.success());
     let content = fs::read_to_string(input.with_extension("s")).unwrap();
+    // A tabela de símbolos guarda o tipo, a posição e a espécie; a árvore só o número.
     assert!(
-        content.contains("2:5          Let x#0@2:9: u8\n"),
+        content.contains("[variáveis main]\n#N  NOME  TIPO  DECLARAÇÃO  ESPÉCIE\n0   x     u8    2:9         let\n"),
         "{content}"
     );
+    assert!(content.contains("2:5          Let x#0\n"), "{content}");
 }
 
 #[test]

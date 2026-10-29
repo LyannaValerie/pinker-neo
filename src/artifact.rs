@@ -7,9 +7,6 @@
 use crate::lexer;
 use crate::token::{Keyword, Position, Token, TokenKind};
 
-/// Versão dos formatos. Muda quando um formato muda de forma incompatível.
-pub const VERSION: u32 = 1;
-
 // pink-nav: start
 // pink-resume: Formatos do pipeline, o cabeçalho e a detecção do formato de um arquivo pela primeira linha.
 // pink-keywords: formato, cabeçalho, versão, fonte, extensão, detectar, erro de formato
@@ -20,27 +17,37 @@ pub enum Format {
     Semantic,
 }
 
-/// Cada formato, o nome usado em `--emit` e no cabeçalho, e a extensão do arquivo.
-const FORMATS: &[(Format, &str, &str)] = &[
-    (Format::Tokens, "tokens", "t"),
-    (Format::Ast, "ast", "a"),
-    (Format::Semantic, "semantic", "s"),
+/// Cada formato, o nome usado em `--emit` e no cabeçalho, a extensão do arquivo e a
+/// versão do formato. A versão muda quando o formato muda de forma incompatível.
+const FORMATS: &[(Format, &str, &str, u32)] = &[
+    (Format::Tokens, "tokens", "t", 1),
+    (Format::Ast, "ast", "a", 1),
+    (Format::Semantic, "semantic", "s", 2),
 ];
 
 impl Format {
     pub fn from_name(name: &str) -> Option<Format> {
         FORMATS
             .iter()
-            .find(|(_, candidate, _)| *candidate == name)
-            .map(|(format, _, _)| *format)
+            .find(|(_, candidate, _, _)| *candidate == name)
+            .map(|(format, _, _, _)| *format)
+    }
+
+    fn entry(self) -> &'static (Format, &'static str, &'static str, u32) {
+        FORMATS.iter().find(|(f, _, _, _)| *f == self).unwrap()
     }
 
     pub fn name(self) -> &'static str {
-        FORMATS.iter().find(|(f, _, _)| *f == self).unwrap().1
+        self.entry().1
     }
 
     pub fn extension(self) -> &'static str {
-        FORMATS.iter().find(|(f, _, _)| *f == self).unwrap().2
+        self.entry().2
+    }
+
+    /// A versão do formato que esta versão do `pinker` grava e lê.
+    pub fn version(self) -> u32 {
+        self.entry().3
     }
 }
 
@@ -64,7 +71,11 @@ const SOURCE: &str = " · fonte: ";
 /// A primeira linha de um arquivo do pipeline: o formato, a versão e o código-fonte de
 /// origem, cujo nome aparece nos diagnósticos das etapas seguintes.
 pub fn header(format: Format, source: &str) -> String {
-    format!("{PREFIX}{} {VERSION}{SOURCE}{source}\n", format.name())
+    format!(
+        "{PREFIX}{} {}{SOURCE}{source}\n",
+        format.name(),
+        format.version()
+    )
 }
 
 /// O formato e o código-fonte de um arquivo do pipeline. `Ok(None)` quando o conteúdo não
@@ -88,11 +99,12 @@ pub fn detect(content: &str) -> Result<Option<(Format, String)>, FormatError> {
             format!("formato desconhecido '{name}'; os formatos são tokens, ast e semantic"),
         )
     })?;
-    if version != VERSION.to_string() {
+    if version != format.version().to_string() {
         return Err(format_error(
             1,
             format!(
-                "a versão '{version}' do formato {name} não é suportada; esta versão do pinker lê a versão {VERSION}"
+                "a versão '{version}' do formato {name} não é suportada; esta versão do pinker lê a versão {}",
+                format.version()
             ),
         ));
     }
@@ -210,14 +222,19 @@ pub(crate) struct TreeReader<'a> {
 
 impl<'a> TreeReader<'a> {
     pub fn new(content: &'a str) -> Result<Self, FormatError> {
-        let lines = content_lines(content)
+        Self::from_lines(content_lines(content))
+    }
+
+    /// Lê só as linhas dadas, já sem comentários: a seção de árvore de um arquivo com
+    /// outras seções.
+    pub fn from_lines(
+        lines: impl IntoIterator<Item = (usize, &'a str)>,
+    ) -> Result<Self, FormatError> {
+        let lines = lines
+            .into_iter()
             .map(|(line, text)| tree_line_of(line, text))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(TreeReader { lines, index: 0 })
-    }
-
-    pub fn lines(&self) -> &[TreeLine<'a>] {
-        &self.lines
     }
 
     /// A próxima linha, se ela for um filho no nível `depth`. Um nível acima de `depth` é
