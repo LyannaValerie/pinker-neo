@@ -55,6 +55,7 @@ redeclaradas como função, variável ou parâmetro.
 | Operadores | Operandos | Resultado |
 |---|---|---|
 | `+` `-` `*` `/` `%` | dois inteiros do mesmo tipo | o mesmo tipo |
+| `+` | dois `text` | `text` (concatenação) |
 | `<` `<=` `>` `>=` | dois inteiros do mesmo tipo | `bool` |
 | `==` `!=` | dois valores do mesmo tipo (inteiro, `bool` ou `text`) | `bool` |
 | `and` `or` | dois `bool` | `bool` |
@@ -62,6 +63,11 @@ redeclaradas como função, variável ou parâmetro.
 | `-` prefixo | um inteiro com sinal | o mesmo tipo |
 
 `if` e `while` exigem uma condição `bool`.
+
+O `+` mantém a precedência e a associatividade de sempre: `"a" + "b" + "c"` é
+`("a" + "b") + "c"`, e `"a" + "b" == "ab"` compara o resultado da concatenação. Não há
+conversão implícita: `"a" + 1`, `1 + "a"` e qualquer `+` com `bool` são erros. Os
+outros operadores aritméticos não aceitam textos.
 
 ## Avaliação constante
 
@@ -81,6 +87,12 @@ Uma expressão que só depende de literais é avaliada durante a análise:
 - **Limitação:** o código que vem depois de `give`, `break` ou `continue` no mesmo bloco
   também nunca executa, mas a análise ainda não o reconhece. Uma falha de avaliação
   constante nele continua sendo erro.
+- **Textos não são constantes.** A avaliação constante só conhece inteiros e lógicos. A
+  concatenação de dois literais (`"a" + "b"`) não é calculada nem dobrada: fica na árvore
+  e executa como qualquer outra. Ela não tem falha que se possa apontar antes da
+  execução (só a falta de memória, que é fatal). Uma condição que depende de textos, como
+  `"a" + "b" == "ab"`, também não é constante: o código dentro dela é avaliado
+  normalmente.
 
 ## Conversões com `morph`
 

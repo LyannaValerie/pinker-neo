@@ -69,6 +69,9 @@ pub enum Operation {
     Binary(BinaryOperator, IntType),
     /// Desempilha dois valores do tipo e empilha `bool`: `==` ou `!=`.
     Equality(BinaryOperator, Type),
+    /// Desempilha dois textos e empilha um texto novo com o conteúdo do primeiro seguido
+    /// do segundo: o `+` entre textos.
+    Concat,
     /// Troca o sinal de um inteiro com sinal.
     Negate(IntType),
     Not,
@@ -196,6 +199,7 @@ fn operation_text(
         Operation::Clear(index) => format!("clear {}", variable(*index)),
         Operation::Binary(operator, int) => format!("{}.{int}", mnemonic(*operator)),
         Operation::Equality(operator, ty) => format!("{}.{ty}", mnemonic(*operator)),
+        Operation::Concat => "concat".to_string(),
         Operation::Negate(int) => format!("neg.{int}"),
         Operation::Not => "not".to_string(),
         Operation::Jump(target) => format!("jump {target}"),
@@ -329,7 +333,8 @@ fn read_operation(
         "const" | "add" | "sub" | "mul" | "div" | "rem" | "lt" | "le" | "gt" | "ge" | "eq"
         | "ne" | "neg" | "say" => 1,
         "morph" => 2,
-        "load" | "store" | "clear" | "not" | "jump" | "jump_false" | "call" | "pop" | "give" => 0,
+        "load" | "store" | "clear" | "concat" | "not" | "jump" | "jump_false" | "call" | "pop"
+        | "give" => 0,
         _ => {
             return Err(format_error(
                 line,
@@ -413,6 +418,7 @@ fn read_operation(
             };
             Operation::Equality(operator, ty(0)?)
         }
+        "concat" => Operation::Concat,
         "neg" => Operation::Negate(int(0)?),
         "not" => Operation::Not,
         "jump" => Operation::Jump(target(operand)?),
@@ -656,6 +662,11 @@ fn step(
             pop(state, Some(*ty))?;
             pop(state, Some(*ty))?;
             state.stack.push(Type::Bool);
+        }
+        Operation::Concat => {
+            pop(state, Some(Type::Text))?;
+            pop(state, Some(Type::Text))?;
+            state.stack.push(Type::Text);
         }
         Operation::Negate(int) => {
             if !int.signed() {

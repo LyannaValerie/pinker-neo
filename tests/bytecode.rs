@@ -60,6 +60,7 @@ fun main()
     say(not (largo == 255) or false and true)
     say(-largo)
     say("a" != "b")
+    say(classifica(1) + ", " + "" + "ação")
     conta(5)
     let x = 1
     if true
@@ -117,7 +118,7 @@ fn bytecode_ida_e_volta() {
     vm::run(&read, &mut output).unwrap();
     assert_eq!(
         String::from_utf8(output).unwrap(),
-        "3628800\nnegativo\nzero: \"nada\"\nfalse\n-255\ntrue\n1\n3\n5\nsombra\n1\n"
+        "3628800\nnegativo\nzero: \"nada\"\nfalse\n-255\ntrue\npositivo, ação\n1\n3\n5\nsombra\n1\n"
     );
 }
 
@@ -433,6 +434,44 @@ fn secoes_de_codigo_malformadas() {
             .contains(
                 "a assinatura de 'f' diz (i64), mas os parâmetros da tabela de variáveis são ()"
             )
+    );
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Concatenação no .b: a instrução concat, a recusa de operandos que não são textos e a forma da instrução.
+// pink-keywords: teste, concatenação, concat, bytecode, verificador, erro de formato, texto
+#[test]
+fn concat_junta_dois_textos_da_pilha() {
+    let source = "fun main()\n    let a = \"x\"\n    say(a + \"y\")\n";
+    let content = rendered(source);
+    assert!(
+        content.contains("2   3:9      load a#0\n3   3:13     const.text \"y\"\n4   3:11     concat\n5   3:5      say.text\n"),
+        "{content}"
+    );
+    let message = tampered(source, "const.text \"y\"", "const.i64 1");
+    assert!(
+        message.contains("instrução 4: esperava text na pilha, encontrei i64"),
+        "{message}"
+    );
+    let message = tampered(
+        "fun main()\n    let a = 1\n    say(a + 2)\n",
+        "add.i64",
+        "concat",
+    );
+    assert!(
+        message.contains("esperava text na pilha, encontrei i64"),
+        "{message}"
+    );
+    assert!(
+        malformed(source, "concat", "concat.text")
+            .1
+            .contains("'concat' leva 0 tipo(s)")
+    );
+    assert!(
+        malformed(source, "concat", "concat 1")
+            .1
+            .contains("operando inesperado")
     );
 }
 // pink-nav: end

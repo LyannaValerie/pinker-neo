@@ -339,6 +339,112 @@ fn limite_conta_so_as_chamadas_ativas() {
 // pink-nav: end
 
 // pink-nav: start
+// pink-resume: Concatenação de textos: literais, variáveis e resultados; vazios; Unicode e escapes; encadeamento; ordem e avaliação única; soma de inteiros intacta; textos dinâmicos depois do bloco e da função; cópia e substituição.
+// pink-keywords: teste, concatenação, texto, +, vazio, unicode, escape, ordem, avaliação única, texto dinâmico, cópia
+#[test]
+fn concatena_literais_variaveis_e_resultados_de_funcoes() {
+    assert_eq!(
+        output(
+            "fun saudacao(nome: text) -> text\n    give \"Olá, \" + nome\n\nfun main()\n    say(saudacao(\"Pinker\"))\n    let a = \"Pin\"\n    let b = \"ker\"\n    say(a + b)\n    say(saudacao(a) + \"!\")\n"
+        ),
+        "Olá, Pinker\nPinker\nOlá, Pin!\n"
+    );
+}
+
+#[test]
+fn texto_vazio_em_cada_lado() {
+    assert_eq!(
+        main_output(&[
+            "let vazio = \"\"",
+            "say(\"\" + \"x\")",
+            "say(\"x\" + \"\")",
+            "say(vazio + vazio == \"\")",
+            "say(\"[\" + (\"\" + \"\") + \"]\")",
+        ]),
+        "x\nx\ntrue\n[]\n"
+    );
+}
+
+#[test]
+fn unicode_e_escapes_sao_preservados_sem_normalizacao() {
+    // "é" composto (U+00E9) e decomposto (e + U+0301) continuam diferentes: a
+    // concatenação copia os bytes, sem normalizar.
+    let source = main_with(&[
+        "say(\"ação\" + \" 🌸 \" + \"日本\")",
+        "say(\"linha\\n\" + \"\\t\\\"aspas\\\"\")",
+        "say(\"\u{e9}\" + \"|\" + \"e\u{301}\")",
+        "say(\"\u{e9}\" == \"e\u{301}\")",
+    ]);
+    assert_eq!(
+        output(&source),
+        "ação 🌸 日本\nlinha\n\t\"aspas\"\n\u{e9}|e\u{301}\nfalse\n"
+    );
+}
+
+#[test]
+fn encadeamento_associa_pela_esquerda_e_precedencia_se_mantem() {
+    assert_eq!(
+        main_output(&[
+            "say(\"a\" + \"b\" + \"c\" + \"d\")",
+            "say(\"a\" + \"b\" == \"ab\")",
+            "say(\"a\" + (\"b\" + \"c\"))",
+        ]),
+        "abcd\ntrue\nabc\n"
+    );
+}
+
+#[test]
+fn operandos_avaliados_uma_vez_da_esquerda_para_a_direita() {
+    assert_eq!(
+        output(
+            "fun marca(t: text) -> text\n    say(t)\n    give t\n\nfun main()\n    say(marca(\"1\") + marca(\"2\") + marca(\"3\"))\n"
+        ),
+        "1\n2\n3\n123\n"
+    );
+}
+
+#[test]
+fn soma_de_inteiros_e_seus_erros_se_mantem() {
+    assert_eq!(
+        main_output(&["say(2 + 3)", "let x: u8 = 250", "say(x + 5)"]),
+        "5\n255\n"
+    );
+    let (output, message, line, column) =
+        failure(&["let x: u8 = 255", "say(\"antes\")", "say(x + 1)"]);
+    assert_eq!(output, "antes\n");
+    assert_eq!(message, "overflow: 255 + 1 = 256 não cabe em u8");
+    assert_eq!((line, column), (4, 11));
+}
+
+#[test]
+fn texto_dinamico_sobrevive_ao_fim_do_bloco_e_da_funcao() {
+    assert_eq!(
+        output(
+            "fun junta(a: text, b: text) -> text\n    if true\n        let r = a + b\n        give r\n    give a\n\nfun main()\n    let mut guardado = \"\"\n    if true\n        let t = junta(\"x\", \"y\") + \"z\"\n        guardado = t\n    say(guardado)\n    let mut i = 0\n    let mut acumulado = \"\"\n    while i < 3\n        let parte = \"-\" + \"o\"\n        acumulado = acumulado + parte\n        i = i + 1\n    say(acumulado)\n"
+        ),
+        "xyz\n-o-o-o\n"
+    );
+}
+
+#[test]
+fn copia_e_substituicao_nao_invalidam_outros_valores() {
+    assert_eq!(
+        main_output(&[
+            "let a = \"p\" + \"q\"",
+            "let mut b = a",
+            "b = b + \"!\"",
+            "let mut c = b",
+            "b = \"novo\"",
+            "say(a)",
+            "say(b)",
+            "say(c)",
+        ]),
+        "pq\nnovo\npq!\n"
+    );
+}
+// pink-nav: end
+
+// pink-nav: start
 // pink-resume: Falhas da saída: escrita recusada falha no say; descarga recusada no fim falha mesmo sem erro do programa.
 // pink-keywords: teste, saída, escrita, flush, descarga, write, falha de escrita
 /// Uma saída que recusa a escrita (`write`) ou a descarga (`flush`).

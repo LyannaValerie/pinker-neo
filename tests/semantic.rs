@@ -229,6 +229,62 @@ fn tabela_de_operadores() {
 }
 
 #[test]
+fn concatenacao_so_entre_textos() {
+    accepts(&[
+        "let a = \"x\" + \"y\"",
+        "let b: text = a + \"\" + a",
+        "let c = (a + \"!\") == \"xy!\"",
+    ]);
+    let program = checked("fun main()\n    say(\"a\" + \"b\")\n");
+    let rendered = pinker::checked::render(&program, "t.pk");
+    assert!(rendered.contains("Binária +: text"), "{rendered}");
+    // Sem conversão implícita: misturar texto com inteiro ou com bool é erro, nos dois
+    // lados.
+    for (line, found) in [
+        ("let x = \"a\" + 1", "text e i64"),
+        ("let x = 1 + \"a\"", "i64 e text"),
+        ("let x = \"a\" + true", "text e bool"),
+        ("let x = false + \"a\"", "bool e text"),
+    ] {
+        let message = rejects(&[line]);
+        assert!(
+            message.contains(&format!(
+                "o operador '+' exige operandos do mesmo tipo; encontrei {found}"
+            )),
+            "{line}: {message}"
+        );
+    }
+    assert!(
+        rejects(&["let x = true + false"]).contains("'+' exige inteiros ou textos; encontrei bool")
+    );
+    for operator in ["-", "*", "/", "%"] {
+        let message = rejects(&[&format!("let x = \"a\" {operator} \"b\"")]);
+        assert!(
+            message.contains(&format!("'{operator}' exige inteiros; encontrei text")),
+            "{message}"
+        );
+    }
+    assert!(
+        rejects(&["let x: u8 = \"a\" + \"b\""])
+            .contains("esperava um valor do tipo u8, encontrei text")
+    );
+}
+
+#[test]
+fn concatenacao_constante_nao_e_dobrada_nem_falha_antes_da_execucao() {
+    // A avaliação constante só conhece inteiros e lógicos: "a" + "b" fica na árvore como
+    // está, e uma condição com textos não é constante.
+    let program = checked("fun main()\n    if \"a\" + \"b\" == \"ab\"\n        say(1)\n");
+    let rendered = pinker::checked::render(&program, "t.pk");
+    assert!(rendered.contains("Binária +: text"), "{rendered}");
+    // Mesmo assim, a divisão constante por zero dentro do if continua sendo erro, porque a
+    // condição não é constante.
+    let (message, ..) =
+        error_at("fun main()\n    if \"a\" + \"b\" == \"ab\"\n        say(1 / 0)\n");
+    assert_eq!(message, "divisão por zero");
+}
+
+#[test]
 fn condicoes_exigem_bool() {
     assert!(
         rejects(&["if 1", "    say(1)"]).contains("esperava um valor do tipo bool, encontrei i64")

@@ -43,6 +43,13 @@ origem:
 - A versão é a do formato, e cada formato tem a sua: esta versão do `pinker` lê `tokens`
   1, `ast` 1, `semantic` 2 e `bytecode` 1. Um arquivo de outra versão é recusado com uma mensagem
   clara.
+- A versão sobe quando um arquivo válido da versão anterior deixaria de ser aceito ou
+  passaria a significar outra coisa. Uma forma nova, que antes era recusada e agora é
+  aceita, não sobe a versão: todo arquivo antigo continua valendo como antes. Um
+  `pinker` mais antigo recusa a forma nova com um erro, nunca a executa com outro
+  significado. Foi o caso da concatenação de textos: o `.s` já escrevia `Binária +:
+  text`, que o verificador antigo recusava, e o `.b` ganhou a instrução `concat`, que o
+  leitor antigo não conhece. Os dois formatos ficaram nas versões 2 e 1.
 - A fonte é o `.pk` de onde o arquivo veio. Os diagnósticos da linguagem das etapas
   seguintes apontam para ela. Ela é só uma origem declarada: como o resto do arquivo, pode
   ser editada, e nada confere se o arquivo corresponde ao `.pk` atual. Se o `.pk` mudou
@@ -232,6 +239,7 @@ ordem da tabela de funções. A posição do título é a do `fun`.
 | `add` `sub` `mul` `div` `rem` `.<inteiro>` | Desempilha dois inteiros e empilha o resultado, com overflow e divisão por zero conferidos |
 | `lt` `le` `gt` `ge` `.<inteiro>` | Desempilha dois inteiros e empilha a comparação |
 | `eq` `ne` `.<tipo>` | Desempilha dois valores e empilha a igualdade |
+| `concat` | Desempilha dois textos e empilha um texto novo com o primeiro seguido do segundo: o `+` entre textos |
 | `neg.<inteiro>` | Troca o sinal de um inteiro com sinal |
 | `not` | Nega um `bool` |
 | `jump n` | Continua na instrução `n` |

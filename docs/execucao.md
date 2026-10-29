@@ -10,9 +10,13 @@ As decisões de execução da Pinker. Há dois motores, e as regras valem para o
   mensagem e a mesma posição.
 
 Os dois usam o mesmo **runtime** (`src/runtime.rs`): os valores em execução, as
-operações sobre eles (aritmética conferida, comparações, negação, `morph`, `say`), as
-falhas definidas com as suas mensagens e o limite de chamadas. Uma regra de execução é
-escrita uma vez só, e por isso não pode divergir entre os motores.
+operações sobre eles (aritmética conferida, comparações, negação, concatenação de
+textos, `morph`, `say`), as falhas definidas com as suas mensagens e o limite de
+chamadas. Cada operação fica escrita num lugar só. Isso não basta para os motores
+concordarem: a ordem de avaliação, o fluxo, a gestão dos quadros e a tradução para
+bytecode são de cada um. Por isso os testes executam os dois motores e os comparam
+entre si e com resultados esperados escritos à parte, já que dois motores que
+compartilham um erro do runtime concordariam no erro.
 
 Nenhum dos dois refaz resolução de nomes nem inferência de tipos: usam os vínculos e
 tipos que a análise semântica já resolveu. As regras de aritmética,
@@ -64,7 +68,16 @@ a() + b()        # a() executa antes de b()
   é a duração da execução. Um `.b` lido de um arquivo cria o armazenamento de cada
   constante de texto ao ser lido. Não é armazenamento `'static` do Rust: é um texto
   com contagem de referências que a árvore mantém.
-- Nesta versão, nenhuma operação cria texto novo: todo texto vem de um literal.
+- A concatenação (`+` entre dois textos) é a única operação que cria um texto durante a
+  execução. Ela avalia o operando da esquerda e depois o da direita, cada um uma vez, e
+  cria um armazenamento novo com o conteúdo dos dois, nessa ordem, byte a byte: Unicode
+  e escapes são preservados, sem normalização. O resultado é imutável, como qualquer
+  texto, e os operandos não mudam. Mesmo com um operando vazio, o resultado é um
+  armazenamento novo.
+- O texto criado é **dinâmico**: o armazenamento tem contagem de referências e não
+  pertence à árvore nem ao bytecode. Copiá-lo para outra variável, passá-lo como
+  argumento ou devolvê-lo com `give` acrescenta uma referência; ele continua válido
+  enquanto houver uma.
 - Quando um bloco termina, as variáveis declaradas nele são esvaziadas, por qualquer
   saída: fim normal, `give`, `break`, `continue` ou falha de execução. No bytecode, o fim
   normal e as saídas por `break` e `continue` esvaziam com `clear`; `give` e a falha
@@ -72,8 +85,15 @@ a() + b()        # a() executa antes de b()
   termina, o quadro inteiro é descartado. Cada uma dessas perdas solta uma referência.
 - O valor de um `give` já tem a sua própria referência antes da limpeza: um texto
   devolvido chega intacto a quem chamou.
-- O armazenamento de um texto criado durante a execução seria liberado ao perder a
-  última referência; os literais continuam vivos com a árvore.
+- O armazenamento de um texto dinâmico é liberado no momento em que ele perde a última
+  referência: quando o bloco da variável que o guardava termina, quando a variável
+  recebe outro valor, quando o quadro de uma chamada é descartado ou quando um valor
+  intermediário é consumido. Os literais continuam vivos com a árvore ou com o
+  bytecode.
+- Criar um texto pode faltar memória. Isso não é uma falha definida de execução: é o
+  esgotamento de memória tratado pelo Rust, um término fatal (ver "Falhas fatais do
+  ambiente"). Nunca vira corrupção nem sucesso falso, mas não há diagnóstico da Pinker
+  nem código 3.
 
 ## Falhas de execução
 

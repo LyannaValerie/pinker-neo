@@ -405,3 +405,148 @@ fn verificador_usa_o_tipo_da_tabela() {
     );
 }
 // pink-nav: end
+
+// pink-nav: start
+// pink-resume: Artefatos gravados pela versão d8b2948 (antes da concatenação) continuam aceitos, executam igual e são gravados com os mesmos bytes.
+// pink-keywords: teste, compatibilidade, versão, artefato antigo, .s, .b, concatenação
+/// O programa e os arquivos `.s` e `.b` que o `pinker` do commit d8b2948 gravou para ele.
+const OLD_SOURCE: &str = r#"fun junta(a: text, n: u8) -> text
+    if n > 1
+        give a
+    give "um"
+
+fun main()
+    let t = junta("dois", 2)
+    say(t)
+    say(t == "dois")
+"#;
+const OLD_SEMANTIC: &str = r#"# pinker semantic 2 · fonte: antigo.pk
+[funções]
+#NOME  DECLARAÇÃO  ASSINATURA
+junta  1:5         (text, u8) -> text
+main   6:5         ()
+
+[variáveis junta]
+#N  NOME  TIPO  DECLARAÇÃO  ESPÉCIE
+0   a     text  1:11        parâmetro
+1   n     u8    1:20        parâmetro
+
+[variáveis main]
+#N  NOME  TIPO  DECLARAÇÃO  ESPÉCIE
+0   t     text  7:9         let
+
+[árvore]
+#POSIÇÃO NÓ
+1:1      Função junta
+1:11       Parâmetro a#0
+1:20       Parâmetro n#1
+2:5        Bloco
+2:5          If
+2:10           Binária >: bool
+2:8              Variável n#1: u8
+2:12             Inteiro 1: u8
+3:9            Bloco
+3:9              Give
+3:14               Variável a#0: text
+4:5          Give
+4:10           Texto "um": text
+6:1      Função main
+7:5        Bloco
+7:5          Let t#0
+7:13           Chamada junta: text
+7:19             Texto "dois": text
+7:27             Inteiro 2: u8
+8:5          Chamada say (predefinida)
+8:9            Variável t#0: text
+9:5          Chamada say (predefinida)
+9:11           Binária ==: bool
+9:9              Variável t#0: text
+9:14             Texto "dois": text
+"#;
+const OLD_BYTECODE: &str = r#"# pinker bytecode 1 · fonte: antigo.pk
+[funções]
+#NOME  DECLARAÇÃO  ASSINATURA
+junta  1:5         (text, u8) -> text
+main   6:5         ()
+
+[variáveis junta]
+#N  NOME  TIPO  DECLARAÇÃO  ESPÉCIE
+0   a     text  1:11        parâmetro
+1   n     u8    1:20        parâmetro
+
+[variáveis main]
+#N  NOME  TIPO  DECLARAÇÃO  ESPÉCIE
+0   t     text  7:9         let
+
+[código junta 1:1]
+#N  POSIÇÃO  INSTRUÇÃO
+0   2:8      load n#1
+1   2:12     const.u8 1
+2   2:10     gt.u8
+3   2:5      jump_false 6
+4   3:14     load a#0
+5   3:9      give
+6   4:10     const.text "um"
+7   4:5      give
+
+[código main 6:1]
+#N  POSIÇÃO  INSTRUÇÃO
+0   7:19     const.text "dois"
+1   7:27     const.u8 2
+2   7:13     call junta
+3   7:5      store t#0
+4   8:9      load t#0
+5   8:5      say.text
+6   9:9      load t#0
+7   9:14     const.text "dois"
+8   9:11     eq.text
+9   9:5      say.bool
+10  7:5      clear t#0
+11  6:1      give
+"#;
+
+#[test]
+fn artefatos_anteriores_a_concatenacao_continuam_aceitos() {
+    use pinker::{bytecode, lower::lower, vm};
+    let program = checked_program(OLD_SOURCE);
+    assert_eq!(checked::render(&program, "antigo.pk"), OLD_SEMANTIC);
+    assert_eq!(
+        bytecode::render(&lower(&program), "antigo.pk"),
+        OLD_BYTECODE
+    );
+
+    let read = checked::read(OLD_SEMANTIC).unwrap();
+    verifier::verify(&read).unwrap();
+    assert_eq!(output(&read), "dois\ntrue\n");
+    let compiled = bytecode::read(OLD_BYTECODE).unwrap();
+    bytecode::verify(&compiled).unwrap();
+    let mut out = Vec::new();
+    vm::run(&compiled, &mut out).unwrap();
+    assert_eq!(out, b"dois\ntrue\n");
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Concatenação no .s: ida e volta, e o verificador recusa um + de textos com tipo ou operando incoerente.
+// pink-keywords: teste, concatenação, .s, ida e volta, verificador, adulteração, texto
+const CONCAT: &str = "fun junta(a: text) -> text\n    give a + \"!\"\n\nfun main()\n    let a = \"x\"\n    say(junta(a + \"y\") + \"\")\n";
+
+#[test]
+fn arvore_com_concatenacao_ida_e_volta() {
+    let program = checked_program(CONCAT);
+    let content = checked::render(&program, "c.pk");
+    assert!(content.contains("Binária +: text"), "{content}");
+    let read = checked::read(&content).unwrap();
+    assert_eq!(read, program);
+    verifier::verify(&read).unwrap();
+    assert_eq!(output(&read), "xy!\n");
+}
+
+#[test]
+fn verificador_recusa_concatenacao_incoerente() {
+    let message = tampered(CONCAT, "Binária +: text", "Binária +: i64");
+    assert!(message.contains("o tipo i64 não é coerente"), "{message}");
+    let message = tampered(CONCAT, "Texto \"!\": text", "Inteiro 1: i64");
+    assert!(message.contains("o tipo text não é coerente"), "{message}");
+}
+// pink-nav: end

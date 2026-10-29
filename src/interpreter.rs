@@ -323,6 +323,46 @@ mod tests {
     }
 
     #[test]
+    fn textos_dinamicos_sao_soltos_na_saida_de_cada_bloco() {
+        // Variáveis: guardado #0, i #1, t #2, u #3. Cada execução do corpo do laço cria
+        // textos com +; ao sair do bloco (continue, break ou fim normal), só guardado,
+        // declarada fora, pode segurar o texto.
+        let program = checked(
+            "fun main()\n    let mut guardado = \"\"\n    let mut i = 0\n    loop\n        i = i + 1\n        let t = \"x\" + \"y\"\n        guardado = t\n        if i == 1\n            continue\n        if i == 2\n            break\n        if true\n            let u = t + \"z\"\n            guardado = u\n",
+        );
+        let main = &program.functions[program.main];
+        let CheckedStatementKind::Loop { body } = &main.body.statements[2].kind else {
+            panic!("esperava o loop");
+        };
+        let mut output = Vec::new();
+        let mut interpreter = Interpreter {
+            program: &program,
+            output: &mut output,
+            depth: 1,
+        };
+        let mut frame: Frame = vec![
+            Some(Value::Text(Rc::from(""))),
+            Some(Value::Int(0)),
+            None,
+            None,
+        ];
+        let held = |frame: &Frame| match &frame[0] {
+            Some(Value::Text(text)) => (text.to_string(), Rc::strong_count(text)),
+            other => panic!("esperava um texto em guardado: {other:?}"),
+        };
+        let flow = interpreter.block(body, &mut frame);
+        assert!(matches!(flow, Ok(Flow::Continue)));
+        assert_eq!(held(&frame), ("xy".to_string(), 1));
+        let flow = interpreter.block(body, &mut frame);
+        assert!(matches!(flow, Ok(Flow::Break)));
+        assert_eq!(held(&frame), ("xy".to_string(), 1));
+        let flow = interpreter.block(body, &mut frame);
+        assert!(matches!(flow, Ok(Flow::Normal)));
+        assert_eq!(held(&frame), ("xyz".to_string(), 1));
+        assert!(frame[2].is_none() && frame[3].is_none(), "{frame:?}");
+    }
+
+    #[test]
     fn falha_tambem_esvazia_o_quadro() {
         let program = checked(
             "fun main()\n    let d = \"antes da falha\"\n    if true\n        let e = \"dentro\"\n        let zero = 0\n        say(1 / zero)\n",

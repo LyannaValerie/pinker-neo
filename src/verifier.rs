@@ -230,6 +230,7 @@ impl Verifier<'_> {
                     And | Or => left.ty == Type::Bool && right.ty == Type::Bool && ty == Type::Bool,
                     Equal | NotEqual => same && ty == Type::Bool,
                     Less | LessEqual | Greater | GreaterEqual => integers && ty == Type::Bool,
+                    Add if left.ty == Type::Text => same && ty == Type::Text,
                     Add | Subtract | Multiply | Divide | Remainder => integers && ty == left.ty,
                 }
             }

@@ -1,11 +1,13 @@
 //! Runtime: os serviços que a Pinker oferece enquanto o programa executa.
 //!
 //! Os valores em execução e as operações sobre eles (aritmética com overflow conferido,
-//! divisão e resto, comparações, negação, a conversão de `morph`, a escrita de `say`), as
-//! falhas definidas de execução com as suas mensagens e o limite de chamadas aninhadas.
-//! A máquina virtual (`vm`) e o interpretador de árvore (`interpreter`) usam este mesmo
-//! código, o que garante que uma regra de execução não divirja entre os dois motores. As
-//! regras estão em `docs/execucao.md`.
+//! divisão e resto, comparações, negação, concatenação de textos, a conversão de `morph`,
+//! a escrita de `say`), as falhas definidas de execução com as suas mensagens e o limite
+//! de chamadas aninhadas. A máquina virtual (`vm`) e o interpretador de árvore
+//! (`interpreter`) usam este mesmo código: cada operação fica escrita num lugar só. Isso
+//! não basta para os dois concordarem, porque a ordem de avaliação, o fluxo e a gestão
+//! dos quadros são de cada motor; por isso os testes executam os dois e comparam com
+//! resultados esperados. As regras estão em `docs/execucao.md`.
 
 use std::fmt;
 use std::io::{self, Write};
@@ -64,9 +66,10 @@ pub(crate) fn binary_values(
     position: Position,
 ) -> Result<Value, Diagnostic> {
     use BinaryOperator::*;
-    match operator {
-        Equal => return Ok(Value::Bool(left == right)),
-        NotEqual => return Ok(Value::Bool(left != right)),
+    match (operator, &left, &right) {
+        (Equal, ..) => return Ok(Value::Bool(left == right)),
+        (NotEqual, ..) => return Ok(Value::Bool(left != right)),
+        (Add, Value::Text(a), Value::Text(b)) => return Ok(Value::Text(concatenate(a, b))),
         _ => {}
     }
     let (Value::Int(a), Value::Int(b)) = (left, right) else {
@@ -93,6 +96,17 @@ pub(crate) fn binary_values(
             position,
         )),
     }
+}
+
+/// Um texto novo com o conteúdo de `left` seguido do de `right`, byte a byte, sem
+/// normalização. É o único lugar em que a execução cria um texto: o armazenamento é
+/// dinâmico, contado, e é liberado quando a última referência é perdida. Uma falha de
+/// alocação encerra o processo, como qualquer esgotamento de memória do Rust.
+pub(crate) fn concatenate(left: &str, right: &str) -> Rc<str> {
+    let mut joined = String::with_capacity(left.len() + right.len());
+    joined.push_str(left);
+    joined.push_str(right);
+    Rc::from(joined)
 }
 
 pub(crate) fn negate(value: i128, int: IntType, position: Position) -> Result<Value, Diagnostic> {

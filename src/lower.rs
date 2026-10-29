@@ -298,6 +298,11 @@ impl Lowering<'_> {
                     self.expression(right);
                     self.emit(Operation::Equality(*operator, left.ty), position);
                 }
+                BinaryOperator::Add if left.ty == Type::Text => {
+                    self.expression(left);
+                    self.expression(right);
+                    self.emit(Operation::Concat, position);
+                }
                 _ => {
                     self.expression(left);
                     self.expression(right);

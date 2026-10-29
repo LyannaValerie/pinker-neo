@@ -1,0 +1,19 @@
+# Concatenação: + entre dois textos cria um texto novo, sem mudar os operandos.
+# Execute com: pinker exemplos/textos.pk
+
+fun saudacao(nome: text) -> text
+    give "Olá, " + nome
+
+fun main()
+    say(saudacao("Pinker"))
+
+    # O texto montado no laço continua válido depois que o laço termina.
+    let mut linha = ""
+    let mut i = 0
+    while i < 3
+        linha = linha + "🌸"
+        i = i + 1
+    say(linha)
+
+    # Não há conversão implícita: "a" + 1 é erro; a soma de inteiros continua igual.
+    say(2 + 3)

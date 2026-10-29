@@ -560,7 +560,13 @@ impl FunctionChecker<'_> {
                 let hint = expected.filter(|ty| matches!(ty, Type::Int(_)));
                 let (left, right) = self.operands(left, right, hint)?;
                 same_type(symbol, &left, &right, position)?;
-                let int = integer_operands(symbol, left.ty, position)?;
+                // `+` entre dois textos é a concatenação: produz um texto novo. Ela não
+                // passa pela avaliação constante, que só conhece inteiros e lógicos, e
+                // não tem falha que se possa apontar antes da execução.
+                if operator == Add && left.ty == Type::Text {
+                    return Ok(binary(operator, left, right, Type::Text, position));
+                }
+                let int = arithmetic_operands(operator, left.ty, position)?;
                 if self.unevaluated == 0 {
                     self.constant_arithmetic(operator, &left, &right, int, position)?;
                 }
@@ -793,6 +799,23 @@ fn same_type(
         ));
     }
     Ok(())
+}
+
+/// Os operandos de `+ - * / %`, já do mesmo tipo: inteiros, ou textos no caso de `+`, que
+/// quem chama trata antes.
+fn arithmetic_operands(
+    operator: BinaryOperator,
+    ty: Type,
+    position: Position,
+) -> Result<IntType, Diagnostic> {
+    match ty {
+        Type::Int(int) => Ok(int),
+        _ if operator == BinaryOperator::Add => Err(error(
+            format!("o operador '+' exige inteiros ou textos; encontrei {ty}"),
+            position,
+        )),
+        _ => integer_operands(operator.as_str(), ty, position),
+    }
 }
 
 fn integer_operands(symbol: &str, ty: Type, position: Position) -> Result<IntType, Diagnostic> {
