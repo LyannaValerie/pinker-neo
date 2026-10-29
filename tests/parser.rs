@@ -3,7 +3,7 @@
 use pinker::ast::{self, ElseBranch, Expression, ExpressionKind, Program, StatementKind};
 use pinker::lexer::tokenize;
 use pinker::parser::parse;
-use pinker::token::Position;
+use pinker::token::{Position, TokenKind};
 
 // pink-nav: start
 // pink-resume: Auxiliares: parse de um programa, resumo de expressões em S-expressões e posição do erro.
@@ -111,7 +111,10 @@ fn comparacoes_nao_se_encadeiam() {
 fn not_nao_entra_como_operando_de_comparacao() {
     let (message, column) = expression_error("x == not y");
     assert_eq!(column, 6);
-    assert!(message.contains("esperava uma expressão"), "{message}");
+    assert_eq!(
+        message,
+        "'not' tem precedência menor que '==' e só pode ser operando dele entre parênteses"
+    );
 }
 
 #[test]
@@ -139,6 +142,153 @@ fn minimo_de_i64_e_negacao_da_magnitude() {
 fn expressao_incompleta_e_erro() {
     let (message, _) = expression_error("a +");
     assert!(message.contains("encontrei o fim da linha"), "{message}");
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Operando ausente: operador só binário no início, '+' prefixo, operador sem operando antes de um terminador, operadores em sequência; construções válidas e erros semânticos preservados.
+// pink-keywords: teste, operando ausente, operador, + unário, terminador, fim do arquivo, not, precedência, semântica
+/// A mensagem e a coluna do erro de sintaxe na linha 2 de `fun main()`.
+fn main_error(line: &str) -> (String, usize) {
+    let (message, at_line, column) = error_at(&format!("fun main()\n    {line}\n"));
+    assert_eq!(at_line, 2, "{line}");
+    (message, column)
+}
+
+#[test]
+fn operador_so_binario_sem_operando_a_esquerda() {
+    for (line, operator, column) in [
+        ("say(* 2)", "*", 9),
+        ("say(/ 2)", "/", 9),
+        ("say(% 2)", "%", 9),
+        ("say(== 2)", "==", 9),
+        ("let x = and true", "and", 13),
+        ("let x = or false", "or", 13),
+        ("x = < 1", "<", 9),
+        ("give != 1", "!=", 10),
+        // Dois operadores seguidos: o segundo é o que não tem operando à esquerda.
+        ("say(1 + * 2)", "*", 13),
+        ("say(1 < < 2)", "<", 13),
+    ] {
+        assert_eq!(
+            main_error(line),
+            (
+                format!("falta o operando à esquerda de '{operator}'"),
+                column
+            ),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn mais_prefixo_nao_existe() {
+    for (line, column) in [("let x = +1", 13), ("say(1 + + 2)", 13), ("say(-+1)", 10)] {
+        assert_eq!(
+            main_error(line),
+            (
+                "a Pinker não tem '+' unário: '+' precisa de um operando à esquerda".to_string(),
+                column
+            ),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn operador_sem_operando_antes_de_um_terminador() {
+    // A posição é a do token que mostra a ausência: a quebra, ')' ou ','.
+    for (line, operator, found, column) in [
+        ("let x = 1 +", "+", "o fim da linha", 16),
+        ("say(1 *)", "*", "')'", 12),
+        ("say(f(1 +, 2))", "+", "','", 14),
+        ("let x = -", "-", "o fim da linha", 14),
+        ("if not", "not", "o fim da linha", 11),
+        ("let x = 1 and", "and", "o fim da linha", 18),
+        ("say((1 ==))", "==", "')'", 14),
+    ] {
+        assert_eq!(
+            main_error(line),
+            (
+                format!("falta o operando à direita de '{operator}', encontrei {found}"),
+                column
+            ),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn operador_sem_operando_antes_do_fim_do_bloco_e_do_arquivo() {
+    // O lexer sempre põe uma QUEBRA depois da última linha, então um .pk nunca leva o
+    // parser a um DEDENT ou ao FIM logo depois de um operador. Um .t editado pode: os
+    // tokens aqui são os do lexer sem a QUEBRA (e sem o DEDENT) que seguem o '+'.
+    let tokens = tokenize("fun main()\n    give 1 +\n").unwrap();
+    let plus = tokens.iter().position(|token| token.lexeme == "+").unwrap();
+    for (removed, found) in [(1, "o fim do bloco"), (2, "o fim do arquivo")] {
+        let mut edited = tokens.clone();
+        edited.drain(plus + 1..plus + 1 + removed);
+        assert!(matches!(
+            edited[plus + 1].kind,
+            TokenKind::Dedent | TokenKind::Eof
+        ));
+        let e = parse(&edited).expect_err("o parser deveria rejeitar");
+        assert_eq!(
+            e.message,
+            format!("falta o operando à direita de '+', encontrei {found}")
+        );
+        assert_eq!(e.position, edited[plus + 1].position);
+    }
+}
+
+#[test]
+fn palavra_reservada_nao_e_apresentada_como_operador() {
+    assert_eq!(
+        main_error("let x = 1 + if"),
+        (
+            "esperava o operando à direita de '+', encontrei 'if'".to_string(),
+            17
+        )
+    );
+    // Sem operador antes, a mensagem continua a de sempre.
+    assert_eq!(
+        main_error("say(,)"),
+        ("esperava uma expressão, encontrei ','".to_string(), 9)
+    );
+    assert_eq!(
+        main_error("let x ="),
+        (
+            "esperava uma expressão, encontrei o fim da linha".to_string(),
+            12
+        )
+    );
+    assert_eq!(
+        main_error("let x = - not true"),
+        (
+            "'not' tem precedência menor que '-' e só pode ser operando dele entre parênteses"
+                .to_string(),
+            15
+        )
+    );
+}
+
+#[test]
+fn prefixos_e_vazios_validos_continuam_aceitos() {
+    assert_eq!(expression("-1"), "(- 1)");
+    assert_eq!(expression("1 + -2"), "(+ 1 (- 2))");
+    assert_eq!(expression("1 - -2"), "(- 1 (- 2))");
+    assert_eq!(expression("not not true"), "(not (not true))");
+    assert_eq!(expression("a == (not b)"), "(== a (not b))");
+    assert_eq!(expression("a and not b"), "(and a (not b))");
+    assert_eq!(expression("\"a\" + \"b\""), "(+ \"a\" \"b\")");
+}
+
+#[test]
+fn tipos_incompativeis_formam_uma_arvore() {
+    // A forma é válida; a incompatibilidade é da análise semântica (tests/semantic.rs).
+    assert_eq!(expression("1 + true"), "(+ 1 true)");
+    assert_eq!(expression("-true"), "(- true)");
+    assert_eq!(expression("not 1"), "(not 1)");
 }
 // pink-nav: end
 

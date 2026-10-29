@@ -197,6 +197,40 @@ O parser verifica só a estrutura. Ficam para a análise semântica, entre outra
 - `give` com ou sem valor de acordo com o tipo de retorno da função;
 - a faixa dos literais inteiros, incluindo `-9223372036854775808`.
 
+## Operandos ausentes
+
+Quando o parser espera um operando e encontra outra coisa, o diagnóstico diz o que falta.
+Ele olha o token encontrado e o operador que veio logo antes:
+
+| Situação | Exemplo | Mensagem |
+|---|---|---|
+| Operador só binário (`*` `/` `%` `==` `!=` `<` `<=` `>` `>=` `and` `or`) onde começa um operando | `say(* 2)` | `falta o operando à esquerda de '*'` |
+| `+` como prefixo | `let x = +1` | `a Pinker não tem '+' unário: '+' precisa de um operando à esquerda` |
+| Operador seguido do fim da linha, de `)` ou de `,` | `let x = 1 +` | `falta o operando à direita de '+', encontrei o fim da linha` |
+| `not` como operando de um operador de nível mais alto | `1 == not true` | `'not' tem precedência menor que '==' e só pode ser operando dele entre parênteses` |
+| Outro token depois de um operador | `1 + if` | `esperava o operando à direita de '+', encontrei 'if'` |
+
+```text
+erro.pk:2:16: erro: falta o operando à direita de '+', encontrei o fim da linha
+  2 |     let x = 1 +
+    |                ^
+```
+
+- `-` e `not` são prefixos válidos (`-1`, `--1`, `1 - -2`, `not not true`). O `+` só
+  existe entre dois operandos: `+1` é recusado, e não vira `1`.
+- Em dois operadores seguidos, como `1 + * 2`, o erro aponta o segundo, que não tem
+  operando à esquerda. O parser não tenta adivinhar qual dos dois sobra.
+- Os operandos ausentes são erros de forma. `1 + true` tem a forma certa e vira uma
+  árvore; é a análise semântica que recusa os tipos.
+- Num `.pk`, o lexer fecha cada linha lógica com `QUEBRA`. Dentro de parênteses ou
+  colchetes a linha continua, mas um delimitador aberto no fim do arquivo é recusado pelo
+  próprio lexer. Por isso, um operador seguido do fim do bloco ou do fim do arquivo só
+  chega ao parser por um `.t` editado, e a mensagem diz "o fim do bloco" ou "o fim do
+  arquivo".
+- O parser para no primeiro erro: não continua a leitura, não entrega uma árvore parcial
+  às etapas seguintes, e `--emit=ast` não grava nada. Relatar vários erros de uma vez
+  exige uma recuperação que ainda não existe.
+
 ## `--emit=ast`
 
 `pinker <arquivo.pk> --emit=ast` grava a árvore em `<arquivo>.a`: uma linha por nó, com a

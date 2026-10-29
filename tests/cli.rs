@@ -709,3 +709,51 @@ fn tipo_de_entrada_vem_do_conteudo_e_nao_da_extensao() {
     );
 }
 // pink-nav: end
+
+// pink-nav: start
+// pink-resume: Operando ausente pela CLI: diagnóstico com trecho, código 1 sem executar; --emit=tokens funciona e um --emit=ast que falha não cria nem sobrescreve o .a.
+// pink-keywords: teste, cli, operando ausente, operador, diagnóstico, emit, tokens, ast, sobrescrever
+#[test]
+fn operando_ausente_mostra_o_operador_e_nao_executa() {
+    for (name, source, expected) in [
+        (
+            "operando_ausente_esquerda",
+            "fun main()\n    say(\"executou\")\n    say(* 2)\n",
+            ":3:9: erro: falta o operando à esquerda de '*'\n  3 |     say(* 2)\n    |         ^\n",
+        ),
+        (
+            "operando_ausente_direita",
+            "fun main()\n    say(\"executou\")\n    let x = 1 +\n",
+            ":3:16: erro: falta o operando à direita de '+', encontrei o fim da linha\n  3 |     let x = 1 +\n    |                ^\n",
+        ),
+    ] {
+        let input = source_file(name, source);
+        let (code, stdout, stderr) = run(&input, &[]);
+        assert_eq!(code, Some(1), "{name}: {stderr}");
+        assert!(stdout.is_empty(), "{name}: {stdout}");
+        assert_eq!(stderr, format!("{}{expected}", input.display()), "{name}");
+    }
+}
+
+#[test]
+fn erro_do_parser_nao_impede_tokens_nem_grava_a_arvore() {
+    let input = source_file("operando_ausente_emit", "fun main()\n    say(1 *)\n");
+    let (code, stdout, _) = run(&input, &["--emit=tokens", "-o", "-"]);
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("2:11     SÍMBOLO        *\n"), "{stdout}");
+
+    // Sem .a anterior, nada é criado; com um, ele fica intacto.
+    let tree = input.with_extension("a");
+    let (code, _, stderr) = run(&input, &["--emit=ast"]);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(!tree.exists());
+    fs::write(&tree, "conteúdo anterior\n").unwrap();
+    let (code, _, stderr) = run(&input, &["--emit=ast"]);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("erro: falta o operando à direita de '*'"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&tree).unwrap(), "conteúdo anterior\n");
+}
+// pink-nav: end

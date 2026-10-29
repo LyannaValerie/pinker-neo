@@ -350,7 +350,7 @@ impl<'a> Parser<'a> {
                 self.expect_symbol(Symbol::RightParen, "')' para fechar a expressão")?;
                 return Ok(inner);
             }
-            _ => return Err(self.unexpected("uma expressão")),
+            _ => return Err(self.missing_operand()),
         };
         self.advance();
         Ok(Expression { kind, position })
@@ -441,19 +441,103 @@ impl<'a> Parser<'a> {
 
     fn unexpected(&self, expected: &str) -> Diagnostic {
         let token = self.peek();
-        let found = match token.kind {
-            TokenKind::Newline => "o fim da linha".to_string(),
-            TokenKind::Indent => "uma indentação".to_string(),
-            TokenKind::Dedent => "o fim do bloco".to_string(),
-            TokenKind::Eof => "o fim do arquivo".to_string(),
-            _ => format!("'{}'", token.lexeme),
-        };
         error(
-            format!("esperava {expected}, encontrei {found}"),
+            format!("esperava {expected}, encontrei {}", describe(token)),
             token.position,
         )
     }
     // pink-nav: end
+
+    // pink-nav: start
+    // pink-resume: Operando ausente: o erro de primary explica qual operador ficou sem operando, à esquerda ou à direita, o '+' prefixo e o 'not' sem parênteses.
+    // pink-keywords: operando ausente, operador, expressão incompleta, + unário, not, precedência, diagnóstico
+    /// O erro quando o token atual não começa uma expressão. Em `primary`, nada foi
+    /// consumido depois do último operador: se o token anterior é um operador (binário,
+    /// `-` ou `not`), é dele o operando que falta.
+    fn missing_operand(&self) -> Diagnostic {
+        let token = self.peek();
+        let operator = self
+            .index
+            .checked_sub(1)
+            .and_then(|index| self.tokens.get(index))
+            .filter(|previous| is_operator(previous));
+        let message = if token.kind == TokenKind::Symbol(Symbol::Plus) {
+            "a Pinker não tem '+' unário: '+' precisa de um operando à esquerda".to_string()
+        } else if is_binary_only(token) {
+            format!("falta o operando à esquerda de '{}'", token.lexeme)
+        } else if let Some(operator) = operator {
+            let operator = &operator.lexeme;
+            if token.kind == TokenKind::Keyword(Keyword::Not) {
+                format!(
+                    "'not' tem precedência menor que '{operator}' e só pode ser operando dele entre parênteses"
+                )
+            } else if ends_operand(token) {
+                format!(
+                    "falta o operando à direita de '{operator}', encontrei {}",
+                    describe(token)
+                )
+            } else {
+                format!(
+                    "esperava o operando à direita de '{operator}', encontrei {}",
+                    describe(token)
+                )
+            }
+        } else {
+            return self.unexpected("uma expressão");
+        };
+        error(message, token.position)
+    }
+    // pink-nav: end
+}
+
+/// Como um token aparece nas mensagens de erro.
+fn describe(token: &Token) -> String {
+    match token.kind {
+        TokenKind::Newline => "o fim da linha".to_string(),
+        TokenKind::Indent => "uma indentação".to_string(),
+        TokenKind::Dedent => "o fim do bloco".to_string(),
+        TokenKind::Eof => "o fim do arquivo".to_string(),
+        _ => format!("'{}'", token.lexeme),
+    }
+}
+
+/// Os operadores que só existem entre dois operandos.
+fn is_binary_only(token: &Token) -> bool {
+    matches!(
+        token.kind,
+        TokenKind::Symbol(
+            Symbol::Star
+                | Symbol::Slash
+                | Symbol::Percent
+                | Symbol::EqualEqual
+                | Symbol::BangEqual
+                | Symbol::Less
+                | Symbol::LessEqual
+                | Symbol::Greater
+                | Symbol::GreaterEqual
+        ) | TokenKind::Keyword(Keyword::And | Keyword::Or)
+    )
+}
+
+/// Os operadores de expressões: os binários e os prefixos `-` e `not`.
+fn is_operator(token: &Token) -> bool {
+    is_binary_only(token)
+        || matches!(
+            token.kind,
+            TokenKind::Symbol(Symbol::Plus | Symbol::Minus) | TokenKind::Keyword(Keyword::Not)
+        )
+}
+
+/// Os tokens que encerram uma expressão: depois de um operador, mostram que o operando
+/// não veio.
+fn ends_operand(token: &Token) -> bool {
+    matches!(
+        token.kind,
+        TokenKind::Newline
+            | TokenKind::Dedent
+            | TokenKind::Eof
+            | TokenKind::Symbol(Symbol::RightParen | Symbol::Comma)
+    )
 }
 
 fn binary(
