@@ -40,6 +40,55 @@ soma(a(), b())   # a() executa antes de b()
 a() + b()        # a() executa antes de b()
 ```
 
+### Estrutura e ordem
+
+A árvore decide o agrupamento: quem é operando de quem (ver "Da gramática à árvore" em
+[`gramatica.md`](gramatica.md)). Ela não decide sozinha o que acontece na execução. A
+ordem dos efeitos vem das regras acima, e o tipo, da análise semântica: a mesma forma
+`a + b` é uma soma de inteiros ou uma concatenação de textos.
+
+Na aritmética, a tradução para bytecode (`src/lower.rs`) é pós-fixada: o operando da
+esquerda, o da direita e o operador. Como a máquina executa as instruções na ordem, isso
+já dá a avaliação da esquerda para a direita. Em `and` e `or`, a mesma tradução estaria
+errada, porque avaliaria sempre o operando da direita. A tradução usa saltos. Em
+[`exemplos/expressoes.pk`](../exemplos/expressoes.pk), as linhas 16 e 17 são
+`say(false and avisa())` e `say(true and avisa())`. Com
+
+```text
+cargo run -q -- exemplos/expressoes.pk --emit=bytecode -o -
+```
+
+este é o trecho delas no código da `main`:
+
+```text
+24  16:9     const.bool false
+25  16:15    jump_false 28
+26  16:19    call avisa
+27  16:15    jump 29
+28  16:15    const.bool false
+29  16:5     say.bool
+30  17:9     const.bool true
+31  17:14    jump_false 34
+32  17:18    call avisa
+33  17:14    jump 35
+34  17:14    const.bool false
+35  17:5     say.bool
+```
+
+- Na linha 16, `jump_false 28` desempilha o `false` e salta para a instrução 28, que
+  empilha o resultado, `false`. A instrução 26, `call avisa`, não executa.
+- Na linha 17, o `true` não salta: `call avisa` executa, e o resultado dela é o do
+  `and`; `jump 35` pula o `const.bool false`.
+- `or` faz o contrário: se o operando da esquerda for verdadeiro, o resultado é `true`
+  sem avaliar o da direita.
+
+Por isso a linha `avaliou o lado direito`, que `avisa` escreve, aparece uma vez só na
+saída do exemplo: a da linha 17. Os testes
+conferem esse efeito: `exemplos/expressoes.pk` está em `tests/exemplos.rs`, e
+`curto_circuito_nao_avalia_o_lado_direito`, em `tests/interpreter.rs`, faz o mesmo com
+`and` e `or` nos dois motores. Os dois testes comparam a saída com um resultado esperado
+escrito à parte.
+
 ## Representação dos valores
 
 | Tipo | Representação |

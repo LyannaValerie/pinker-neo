@@ -49,6 +49,11 @@ const EXAMPLES: &[(&str, &str, i32)] = &[
     ),
     ("sombra", "1\ndentro do if\nfalse\ndentro do if\n1\n", 0),
     ("textos", "Olá, Pinker\n🌸🌸🌸\n5\n", 0),
+    (
+        "expressoes",
+        "7\n9\n5\n9\nfalse\navaliou o lado direito\ntrue\n",
+        0,
+    ),
     // Termina de propósito com uma falha de execução.
     ("transbordo", "250\n251\n252\n253\n254\n255\n", 3),
 ];

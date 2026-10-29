@@ -1,0 +1,17 @@
+# A forma da árvore decide o agrupamento: precedência, associatividade e parênteses.
+# Execute com: pinker exemplos/expressoes.pk
+# O caminho de 1 + 2 * 3 da gramática até a máquina de pilha está em docs/gramatica.md.
+
+fun avisa() -> bool
+    say("avaliou o lado direito")
+    give true
+
+fun main()
+    say(1 + 2 * 3)       # 7: * liga mais que +
+    say((1 + 2) * 3)     # 9: os parênteses agrupam
+    say(10 - 3 - 2)      # 5: - associa pela esquerda, (10 - 3) - 2
+    say(10 - (3 - 2))    # 9
+
+    # and e or fazem curto-circuito: o lado direito só executa se for preciso.
+    say(false and avisa())
+    say(true and avisa())
