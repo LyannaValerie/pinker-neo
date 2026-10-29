@@ -67,7 +67,12 @@ fn main_with(lines: &[&str]) -> String {
 
 /// A saída escrita antes da falha, a mensagem e a posição da falha.
 fn failure(lines: &[&str]) -> (String, String, usize, usize) {
-    let (output, result) = execute(&main_with(lines));
+    failure_in(&main_with(lines))
+}
+
+/// Como `failure`, para um programa inteiro.
+fn failure_in(source: &str) -> (String, String, usize, usize) {
+    let (output, result) = execute(source);
     let e = result.expect_err("a execução deveria falhar");
     (output, e.message, e.position.line, e.position.column)
 }
@@ -183,6 +188,117 @@ fn morph_confere_a_faixa_em_execucao() {
 fn falha_encerra_o_programa_na_hora() {
     let (output, ..) = failure(&["say(1)", "let z = 0", "say(1 / z)", "say(2)"]);
     assert_eq!(output, "1\n");
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: Falha dentro de uma expressão: no operando esquerdo, no direito, num argumento, divisor calculado como zero e curto-circuito; efeitos anteriores ficam, posteriores não ocorrem.
+// pink-keywords: teste, falha, operando, argumento, interrupção, efeito, ordem, divisão por zero, overflow, morph, curto-circuito
+/// Funções que escrevem uma marca e devolvem um valor recebido: as falhas acontecem na
+/// execução, com valores que a análise semântica não conhece. A `main` começa na linha 12.
+const MARKS: &str = "fun marca(t: text, n: int) -> int
+    say(t)
+    give n
+
+fun quebra(t: text, d: int) -> bool
+    say(t)
+    give 1 / d == 1
+
+fun tres(a: int, b: u8, c: int)
+    say(\"corpo\")
+
+fun main()
+";
+
+fn marks_with(lines: &[&str]) -> String {
+    let mut source = MARKS.to_string();
+    for line in lines {
+        source.push_str("    ");
+        source.push_str(line);
+        source.push('\n');
+    }
+    source
+}
+
+#[test]
+fn falha_no_operando_esquerdo_interrompe_antes_do_direito() {
+    // O operando esquerdo do * é a soma, que escreve a e b e transborda.
+    let (output, message, line, column) = failure_in(&marks_with(&[
+        "say((marca(\"a\", 9223372036854775807) + marca(\"b\", 1)) * marca(\"c\", 2))",
+        "say(\"depois\")",
+    ]));
+    assert_eq!(output, "a\nb\n");
+    assert_eq!(
+        message,
+        "overflow: 9223372036854775807 + 1 = 9223372036854775808 não cabe em i64"
+    );
+    assert_eq!((line, column), (13, 42));
+}
+
+#[test]
+fn falha_no_operando_direito_depois_do_esquerdo_inteiro() {
+    let (output, message, line, column) = failure_in(&marks_with(&[
+        "say(marca(\"a\", 1) + marca(\"b\", 6) / marca(\"c\", 0))",
+        "say(\"depois\")",
+    ]));
+    assert_eq!(output, "a\nb\nc\n");
+    assert_eq!(message, "divisão por zero");
+    assert_eq!((line, column), (13, 39));
+}
+
+#[test]
+fn falha_no_segundo_argumento_nao_avalia_o_terceiro_nem_chama() {
+    let (output, message, line, column) = failure_in(&marks_with(&[
+        "tres(marca(\"p\", 1), morph(marca(\"s\", 300)), marca(\"t\", 3))",
+        "say(\"depois\")",
+    ]));
+    assert_eq!(output, "p\ns\n");
+    assert_eq!(message, "conversão fora da faixa: 300 não cabe em u8");
+    assert_eq!((line, column), (13, 25));
+}
+
+#[test]
+fn divisor_calculado_como_zero_falha_depois_dos_dois_operandos() {
+    // Duas funções, cada uma com a sua marca; divisor calcula 3 - 3 na execução.
+    let (output, message, line, column) = failure_in(
+        "fun dividendo() -> int
+    say(\"dividendo\")
+    give 7
+
+fun divisor(n: int) -> int
+    say(\"divisor\")
+    give n - 3
+
+fun main()
+    say(dividendo() / divisor(3))
+    say(\"depois\")
+",
+    );
+    assert_eq!(output, "dividendo\ndivisor\n");
+    assert_eq!(message, "divisão por zero");
+    assert_eq!((line, column), (10, 21));
+}
+
+#[test]
+fn curto_circuito_dispensa_ou_propaga_a_falha_do_operando_direito() {
+    // quebra divide por d na linha 7, coluna 12.
+    let (output, message, line, column) = failure_in(&marks_with(&[
+        "say(false and quebra(\"x\", 0))",
+        "say(true or quebra(\"y\", 0))",
+        "say(true and quebra(\"z\", 0))",
+        "say(\"depois\")",
+    ]));
+    assert_eq!(output, "false\ntrue\nz\n");
+    assert_eq!(message, "divisão por zero");
+    assert_eq!((line, column), (7, 12));
+
+    let (output, message, line, column) = failure_in(&marks_with(&[
+        "say(false or quebra(\"w\", 0))",
+        "say(\"depois\")",
+    ]));
+    assert_eq!(output, "w\n");
+    assert_eq!(message, "divisão por zero");
+    assert_eq!((line, column), (7, 12));
 }
 // pink-nav: end
 

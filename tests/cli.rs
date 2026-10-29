@@ -757,3 +757,26 @@ fn erro_do_parser_nao_impede_tokens_nem_grava_a_arvore() {
     assert_eq!(fs::read_to_string(&tree).unwrap(), "conteúdo anterior\n");
 }
 // pink-nav: end
+
+// pink-nav: start
+// pink-resume: Falha aninhada pela CLI: código 3, só os efeitos anteriores no stdout, o diagnóstico da operação interna com trecho, uma vez.
+// pink-keywords: teste, cli, falha de execução, aninhada, operando, efeito, stdout, stderr, código 3
+#[test]
+fn falha_dentro_de_um_operando_interrompe_a_expressao() {
+    let input = source_file(
+        "falha_aninhada",
+        "fun marca(t: text, n: int) -> int\n    say(t)\n    give n\n\nfun main()\n    say(\"antes\")\n    say(marca(\"a\", 1) + marca(\"b\", 6) / marca(\"c\", 0))\n    say(\"depois\")\n",
+    );
+    let (code, stdout, stderr) = run(&input, &[]);
+    assert_eq!(code, Some(3), "{stderr}");
+    // As marcas da soma e da divisão, sem o resultado da soma nem a linha seguinte.
+    assert_eq!(stdout, "antes\na\nb\nc\n");
+    assert_eq!(
+        stderr,
+        format!(
+            "{}:7:39: erro de execução: divisão por zero\n  7 |     say(marca(\"a\", 1) + marca(\"b\", 6) / marca(\"c\", 0))\n    |                                       ^\n",
+            input.display()
+        )
+    );
+}
+// pink-nav: end

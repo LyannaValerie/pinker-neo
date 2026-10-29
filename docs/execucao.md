@@ -97,7 +97,13 @@ escrito à parte.
 | `bool` | Verdadeiro ou falso |
 | `text` | Uma referência compartilhada, com contagem, a um texto imutável |
 
-- O tipo de cada valor é o tipo estático da expressão; o valor não carrega o tipo.
+- Um literal é o que está escrito no código (`0xFF`, `"olá"`). A análise semântica o
+  converte num valor do tipo estático da expressão. Na execução, um valor é um `Value`
+  (`src/runtime.rs`), com as variantes `Int`, `Bool` e `Text`. A variante separa
+  inteiros, lógicos e textos, mas um `Int` não carrega a largura nem o sinal do seu
+  tipo: `255` num `u8` e `255` num `i64` são o mesmo `Value::Int(255)`. O tipo inteiro
+  vem da expressão, resolvido pela análise semântica. Cada operação o recebe (no
+  bytecode, no próprio mnemônico, como `add.u8`) e confere a faixa por ele.
 - Cada operação inteira é feita com operações verificadas de 128 bits, e o resultado é
   conferido contra a faixa do tipo da expressão. Fora da faixa, é falha de execução. Se
   nem o resultado intermediário couber em 128 bits (o produto de dois `u64` máximos, por
@@ -160,7 +166,37 @@ São falhas definidas de execução:
   mensagem`. A posição é a do operador, da conversão ou da chamada que falhou. Quando a
   entrada é o código-fonte, a linha e um `^` vêm embaixo (ver "O trecho do
   código-fonte" em [`arquivos.md`](arquivos.md)).
-- A falha encerra o programa na hora, sem executar mais nada.
+- A falha encerra o programa na hora, sem executar mais nada. Isso vale também dentro
+  de uma expressão: se a avaliação de um operando ou de um argumento falha, nada depois
+  dela é avaliado. O outro operando, os argumentos seguintes e a operação ou a chamada
+  que esperava o valor não executam. A regra de avaliar os dois operandos de uma divisão
+  antes de conferir o divisor vale quando os dois terminam. A posição é a da operação que
+  falhou, mesmo quando ela está em outra função.
+
+  ```text
+  fun marca(t: text, n: int) -> int
+      say(t)
+      give n
+
+  fun main()
+      say("antes")
+      say(marca("a", 1) + marca("b", 6) / marca("c", 0))
+      say("depois")
+  ```
+
+  A saída padrão recebe `antes`, `a`, `b` e `c`, uma por linha. A soma e o
+  `say("depois")` não executam. O stderr recebe o diagnóstico, e o código é 3:
+
+  ```text
+  falha.pk:7:39: erro de execução: divisão por zero
+    7 |     say(marca("a", 1) + marca("b", 6) / marca("c", 0))
+      |                                       ^
+  ```
+- Os tipos estáticos não eliminam essas falhas. Eles garantem que `/` recebe dois
+  inteiros do mesmo tipo, mas não que o divisor seja diferente de zero, que o resultado
+  caiba no tipo nem que a saída aceite a escrita. Quando a análise semântica calcula o
+  divisor como zero (`x / 0`, `5 % (2 - 2)`), o erro é de compilação, antes da execução.
+  Com valores que só existem na execução, é uma falha de execução.
 - A saída que o programa já escreveu antes da falha é preservada e aparece antes do
   diagnóstico.
 - A saída passa por um buffer: um `say` pode ser aceito e a escrita só falhar quando o
@@ -170,6 +206,7 @@ São falhas definidas de execução:
 - Se o programa falhou e a saída escrita antes da falha também não pôde ser entregue, o
   diagnóstico da falha é mantido, seguido de uma linha que informa a perda da saída.
   Quando a falha é a da própria saída, ela aparece uma vez só.
+
 ## Limites desta implementação
 
 A máquina virtual é iterativa: as chamadas da Pinker ficam numa lista de quadros, não na
