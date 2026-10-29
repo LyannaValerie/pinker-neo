@@ -1,0 +1,9 @@
+# Overflow nunca trunca em silêncio. Este programa termina de propósito com uma falha
+# de execução (código 3) quando o u8 passa de 255.
+# Execute com: pinker exemplos/transbordo.pk
+
+fun main()
+    let mut valor: u8 = 250
+    loop
+        say(valor)
+        valor = valor + 1

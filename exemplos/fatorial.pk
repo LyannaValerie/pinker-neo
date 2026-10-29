@@ -1,0 +1,13 @@
+# Recursão: a função chama a si mesma até chegar ao caso base.
+# Execute com: pinker exemplos/fatorial.pk
+
+fun fatorial(n: u64) -> u64
+    if n <= 1
+        give 1
+    give n * fatorial(n - 1)
+
+fun main()
+    let mut i: u64 = 0
+    while i <= 20
+        say(fatorial(i))
+        i = i + 1

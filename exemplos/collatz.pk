@@ -1,0 +1,22 @@
+# loop, break e continue. A conjectura de Collatz diz que a sequência sempre chega a 1;
+# para as entradas deste exemplo, chega.
+# Execute com: pinker exemplos/collatz.pk
+
+fun passos(inicio: u64) -> int
+    let mut n = inicio
+    let mut contagem = 0
+    loop
+        if n == 1
+            break
+        contagem = contagem + 1
+        if n % 2 == 0
+            n = n / 2
+            continue
+        n = 3 * n + 1
+    give contagem
+
+fun main()
+    say(passos(1))
+    say(passos(6))
+    say(passos(27))
+    say(passos(97))

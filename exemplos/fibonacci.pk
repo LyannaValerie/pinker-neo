@@ -1,0 +1,13 @@
+# Laço com variáveis mutáveis: cada passo guarda os dois últimos termos.
+# Execute com: pinker exemplos/fibonacci.pk
+
+fun main()
+    let mut anterior: u64 = 0
+    let mut atual: u64 = 1
+    let mut contador = 0
+    while contador < 15
+        say(anterior)
+        let proximo = anterior + atual
+        anterior = atual
+        atual = proximo
+        contador = contador + 1

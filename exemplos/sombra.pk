@@ -1,0 +1,15 @@
+# Escopos e sombreamento. Veja a tabela de símbolos com:
+#   pinker exemplos/sombra.pk --emit=semantic -o -
+# Cada 'valor' é uma variável diferente, com o seu número: valor#0, valor#1, valor#2.
+
+fun main()
+    let valor = 1
+    say(valor)
+    if true
+        let valor = "dentro do if"
+        say(valor)
+        if true
+            let valor = false
+            say(valor)
+        say(valor)
+    say(valor)

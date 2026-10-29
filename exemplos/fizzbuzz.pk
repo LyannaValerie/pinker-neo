@@ -1,0 +1,19 @@
+# Uma cadeia de else if e uma função que devolve text.
+# Execute com: pinker exemplos/fizzbuzz.pk
+
+fun rotulo(n: int) -> text
+    if n % 15 == 0
+        give "FizzBuzz"
+    else if n % 3 == 0
+        give "Fizz"
+    else
+        give "Buzz"
+
+fun main()
+    let mut n = 1
+    while n <= 15
+        if n % 3 == 0 or n % 5 == 0
+            say(rotulo(n))
+        else
+            say(n)
+        n = n + 1

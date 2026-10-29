@@ -1,0 +1,23 @@
+# Uma função que devolve bool e tem o seu próprio laço, chamada a cada volta do laço da main.
+# Execute com: pinker exemplos/primos.pk
+
+fun primo(n: u32) -> bool
+    if n < 2
+        give false
+    let mut divisor: u32 = 2
+    while divisor * divisor <= n
+        if n % divisor == 0
+            give false
+        divisor = divisor + 1
+    give true
+
+fun main()
+    let mut n: u32 = 0
+    let mut achados = 0
+    while n < 50
+        if primo(n)
+            say(n)
+            achados = achados + 1
+        n = n + 1
+    say("primos abaixo de 50:")
+    say(achados)
