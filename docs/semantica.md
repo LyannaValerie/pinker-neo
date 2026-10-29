@@ -3,7 +3,7 @@
 As regras que a análise semântica (`src/semantic.rs`) verifica depois do parser. O
 resultado é a árvore verificada (`src/checked.rs`): o programa com os tipos resolvidos,
 cada uso de variável ligado à sua declaração e cada chamada ligada à função chamada. É a
-entrada do interpretador. No `.s`, a árvore vem acompanhada da tabela de símbolos: as
+entrada da tradução para bytecode (`src/lower.rs`). No `.s`, a árvore vem acompanhada da tabela de símbolos: as
 funções com as suas assinaturas e as variáveis de cada função, com tipo, posição e
 espécie (ver [`arquivos.md`](arquivos.md)). A análise para no primeiro erro.
 
@@ -130,7 +130,7 @@ fun wait_forever() -> int
 formato é o de `--emit=ast`, com o tipo de cada expressão. Cada variável aparece como
 `nome#n`, em que `n` identifica a declaração dentro da função; assim o sombreamento fica
 visível. A declaração (`Let`) traz também a posição do nome. A etapa não executa o
-programa; o arquivo `.s` serve de entrada para o interpretador (ver
+programa; o arquivo `.s` serve de entrada para a tradução para bytecode (ver
 [`arquivos.md`](arquivos.md)).
 
 ```text

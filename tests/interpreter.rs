@@ -1,24 +1,46 @@
-//! Testes do interpretador: saída de say, aritmética, falhas de execução, fluxo e ordem.
+//! Testes de execução: saída de say, aritmética, falhas de execução, fluxo e ordem. Cada
+//! programa roda nos dois motores, a máquina virtual e o interpretador de árvore, que
+//! precisam dar a mesma saída e o mesmo diagnóstico.
 
 use std::io::{self, Write};
 
+use pinker::bytecode;
+use pinker::checked::CheckedProgram;
 use pinker::diagnostic::Diagnostic;
-use pinker::interpreter::run;
 use pinker::lexer::tokenize;
+use pinker::lower::lower;
 use pinker::parser::parse;
 use pinker::semantic::check;
+use pinker::{interpreter, vm};
 
 // pink-nav: start
-// pink-resume: Auxiliares: executam um programa e devolvem a saída escrita e a falha de execução, se houver.
-// pink-keywords: auxiliar, helper, execute, output, falha
-/// Executa o programa e devolve o que `say` escreveu e o resultado da execução.
-fn execute(source: &str) -> (String, Result<(), Diagnostic>) {
+// pink-resume: Auxiliares: executam um programa nos dois motores, exigem o mesmo resultado e devolvem a saída escrita e a falha, se houver.
+// pink-keywords: auxiliar, helper, execute, output, falha, paridade, vm, interpretador
+fn checked(source: &str) -> CheckedProgram {
     let tokens = tokenize(source).unwrap_or_else(|e| panic!("erro léxico em {source:?}: {e:?}"));
     let program = parse(&tokens).unwrap_or_else(|e| panic!("erro de sintaxe em {source:?}: {e:?}"));
-    let checked = check(&program).unwrap_or_else(|e| panic!("erro semântico em {source:?}: {e:?}"));
-    let mut output = Vec::new();
-    let result = run(&checked, &mut output);
-    (String::from_utf8(output).unwrap(), result)
+    check(&program).unwrap_or_else(|e| panic!("erro semântico em {source:?}: {e:?}"))
+}
+
+/// Executa o programa no interpretador de árvore e na máquina virtual (com o bytecode
+/// conferido pelo verificador), exige a mesma saída e o mesmo resultado, e os devolve.
+fn execute(source: &str) -> (String, Result<(), Diagnostic>) {
+    let checked = checked(source);
+    let mut by_tree = Vec::new();
+    let tree_result = interpreter::run(&checked, &mut by_tree);
+
+    let lowered = lower(&checked);
+    bytecode::verify(&lowered)
+        .unwrap_or_else(|e| panic!("bytecode recusado para {source:?}: {e:?}"));
+    let mut by_vm = Vec::new();
+    let vm_result = vm::run(&lowered, &mut by_vm);
+
+    assert_eq!(by_vm, by_tree, "saídas diferentes para {source:?}");
+    assert_eq!(
+        vm_result, tree_result,
+        "resultados diferentes para {source:?}"
+    );
+    (String::from_utf8(by_vm).unwrap(), vm_result)
 }
 
 /// A saída de um programa que deve terminar normalmente.
@@ -337,19 +359,20 @@ impl Write for FailingOutput {
     }
 }
 
-fn run_with(source: &str, mut output: FailingOutput) -> Diagnostic {
-    let checked = check(&parse(&tokenize(source).unwrap()).unwrap()).unwrap();
-    run(&checked, &mut output).expect_err("a execução deveria falhar")
+/// A falha nos dois motores, que precisa ser a mesma.
+fn run_with(source: &str, fails_on_write: bool) -> Diagnostic {
+    let checked = checked(source);
+    let by_tree = interpreter::run(&checked, &mut FailingOutput { fails_on_write })
+        .expect_err("a execução deveria falhar");
+    let by_vm = vm::run(&lower(&checked), &mut FailingOutput { fails_on_write })
+        .expect_err("a execução deveria falhar");
+    assert_eq!(by_vm, by_tree);
+    by_vm
 }
 
 #[test]
 fn escrita_recusada_falha_no_say() {
-    let e = run_with(
-        "fun main()\n    say(1)\n",
-        FailingOutput {
-            fails_on_write: true,
-        },
-    );
+    let e = run_with("fun main()\n    say(1)\n", true);
     assert_eq!(
         e.message,
         "não foi possível escrever a saída: escrita recusada"
@@ -361,12 +384,7 @@ fn escrita_recusada_falha_no_say() {
 fn descarga_recusada_no_fim_e_falha_de_execucao() {
     // Cada say é aceito, mas a saída não chega ao destino: a execução não pode terminar
     // com sucesso.
-    let e = run_with(
-        "fun main()\n    say(1)\n    say(2)\n",
-        FailingOutput {
-            fails_on_write: false,
-        },
-    );
+    let e = run_with("fun main()\n    say(1)\n    say(2)\n", false);
     assert_eq!(
         e.message,
         "não foi possível escrever a saída: descarga recusada"

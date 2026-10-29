@@ -132,9 +132,9 @@ fn cabecalho_invalido() {
     // O .s ganhou a tabela de símbolos na versão 2; a versão 1 não é mais lida.
     let (_, message) = format_error(artifact::detect("# pinker semantic 1 · fonte: a.pk\n"));
     assert!(message.contains("lê a versão 2"), "{message}");
-    let (_, message) = format_error(artifact::detect("# pinker bytecode 1 · fonte: a.pk\n"));
+    let (_, message) = format_error(artifact::detect("# pinker assembly 1 · fonte: a.pk\n"));
     assert!(
-        message.contains("formato desconhecido 'bytecode'"),
+        message.contains("formato desconhecido 'assembly'"),
         "{message}"
     );
     let (line, message) = format_error(artifact::detect("# pinker tokens 1\n"));

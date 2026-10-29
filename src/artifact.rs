@@ -1,5 +1,5 @@
 //! Arquivos do pipeline: o cabeçalho comum e a leitura das linhas dos arquivos `.t`
-//! (tokens), `.a` (AST) e `.s` (árvore verificada).
+//! (tokens), `.a` (AST), `.s` (árvore verificada) e `.b` (bytecode).
 //!
 //! Cada etapa grava o seu resultado num arquivo que a etapa seguinte sabe ler. Os formatos
 //! estão em `docs/arquivos.md`.
@@ -15,6 +15,7 @@ pub enum Format {
     Tokens,
     Ast,
     Semantic,
+    Bytecode,
 }
 
 /// Cada formato, o nome usado em `--emit` e no cabeçalho, a extensão do arquivo e a
@@ -23,6 +24,7 @@ const FORMATS: &[(Format, &str, &str, u32)] = &[
     (Format::Tokens, "tokens", "t", 1),
     (Format::Ast, "ast", "a", 1),
     (Format::Semantic, "semantic", "s", 2),
+    (Format::Bytecode, "bytecode", "b", 1),
 ];
 
 impl Format {
@@ -96,7 +98,9 @@ pub fn detect(content: &str) -> Result<Option<(Format, String)>, FormatError> {
     let format = Format::from_name(name).ok_or_else(|| {
         format_error(
             1,
-            format!("formato desconhecido '{name}'; os formatos são tokens, ast e semantic"),
+            format!(
+                "formato desconhecido '{name}'; os formatos são tokens, ast, semantic e bytecode"
+            ),
         )
     })?;
     if version != format.version().to_string() {

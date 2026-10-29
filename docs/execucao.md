@@ -1,8 +1,16 @@
 # Execução da primeira versão
 
-As decisões de execução do interpretador (`src/interpreter.rs`). Ele percorre a árvore
-verificada (`src/checked.rs`) e usa os vínculos e tipos que a análise semântica já
-resolveu: não refaz resolução de nomes nem inferência de tipos. As regras de aritmética,
+As decisões de execução da Pinker. Há dois motores, e as regras valem para os dois:
+
+- **A máquina virtual** (`src/vm.rs`) executa o bytecode traduzido da árvore verificada
+  (`src/lower.rs`). É o caminho padrão da CLI.
+- **O interpretador de árvore** (`src/interpreter.rs`) percorre a árvore verificada
+  (`src/checked.rs`) diretamente. Fica como referência: os testes exigem que os dois
+  deem a mesma saída, o mesmo código de término e o mesmo diagnóstico, com a mesma
+  mensagem e a mesma posição, e as operações sobre valores são o mesmo código nos dois.
+
+Nenhum dos dois refaz resolução de nomes nem inferência de tipos: usam os vínculos e
+tipos que a análise semântica já resolveu. As regras de aritmética,
 conversão, `say` e `main` já estão em [`decisoes.md`](decisoes.md) e
 [`semantica.md`](semantica.md); aqui ficam só as que faltavam.
 
@@ -46,12 +54,16 @@ a() + b()        # a() executa antes de b()
 ## Gestão dos textos
 
 - Cada literal de texto tem um único armazenamento, criado na análise semântica e
-  compartilhado por todos os valores que vêm dele. Ele vive enquanto a árvore verificada
-  existir, que é a duração da execução. Não é armazenamento `'static` do Rust: é um texto
+  compartilhado por todos os valores que vêm dele, inclusive pela instrução `const.text`
+  do bytecode traduzido. Ele vive enquanto a árvore verificada ou o bytecode existir, que
+  é a duração da execução. Um `.b` lido de um arquivo cria o armazenamento de cada
+  constante de texto ao ser lido. Não é armazenamento `'static` do Rust: é um texto
   com contagem de referências que a árvore mantém.
 - Nesta versão, nenhuma operação cria texto novo: todo texto vem de um literal.
 - Quando um bloco termina, as variáveis declaradas nele são esvaziadas, por qualquer
-  saída: fim normal, `give`, `break`, `continue` ou falha de execução. Quando uma chamada
+  saída: fim normal, `give`, `break`, `continue` ou falha de execução. No bytecode, o fim
+  normal e as saídas por `break` e `continue` esvaziam com `clear`; `give` e a falha
+  descartam o quadro inteiro. Quando uma chamada
   termina, o quadro inteiro é descartado. Cada uma dessas perdas solta uma referência.
 - O valor de um `give` já tem a sua própria referência antes da limpeza: um texto
   devolvido chega intacto a quem chamou.
@@ -84,16 +96,21 @@ São falhas definidas de execução:
   Quando a falha é a da própria saída, ela aparece uma vez só.
 ## Limites desta implementação
 
-O interpretador é recursivo: cada chamada, bloco e expressão da Pinker usa pilha do
-próprio Rust.
+A máquina virtual é iterativa: as chamadas da Pinker ficam numa lista de quadros, não na
+pilha do Rust. O interpretador de árvore é recursivo: cada chamada, bloco e expressão da
+Pinker usa pilha do próprio Rust. As etapas anteriores à execução (parser, análise
+semântica, verificadores e tradução para bytecode) também são recursivas, na proporção do
+aninhamento do programa.
 
-- **Chamadas ativas:** no máximo 10.000 ao mesmo tempo, contando a `main`. O limite
+- **Chamadas ativas:** no máximo 10.000 ao mesmo tempo, contando a `main`, nos dois
+  motores. A máquina virtual não depende da pilha do Rust para isso, mas mantém o limite
+  para dar o mesmo resultado que o interpretador. O limite
   conta só as chamadas em andamento; as que já terminaram não contam, então um laço pode
   fazer qualquer quantidade de chamadas em sequência. Passar do limite é uma falha de
   execução com diagnóstico e código 3.
-- **Pilha:** o pipeline roda numa thread com pilha de 256 MB. Ela foi validada nos
-  cenários testados (recursão até o limite, em debug e release), mas não é uma garantia
-  geral: uma chamada da Pinker não usa uma quantidade fixa de pilha, e expressões ou
+- **Pilha:** o pipeline roda numa thread com pilha de 256 MB. Para o interpretador, ela
+  foi validada nos cenários testados (recursão até o limite, em debug e release), mas não
+  é uma garantia geral: uma chamada da Pinker não usa uma quantidade fixa de pilha, e expressões ou
   blocos muito aninhados também consomem pilha. Um estouro da pilha do Rust encerra o
   processo sem diagnóstico da Pinker. Uma pilha explícita, no lugar da recursão, pode ser
   avaliada quando essa limitação importar.
@@ -121,9 +138,12 @@ Nos três casos, a falha nunca vira corrupção silenciosa nem sucesso falso.
 
 ## Linha de comando
 
-- `pinker <arquivo.pk>` passa por todas as etapas e executa o programa.
-- `pinker <arquivo.s>` executa uma árvore verificada gravada antes, depois de conferi-la
-  com o verificador (ver [`arquivos.md`](arquivos.md)). Também é possível partir de um
-  `.t` ou de um `.a`: o pipeline começa na etapa seguinte à do arquivo.
+- `pinker <arquivo.pk>` passa por todas as etapas e executa o programa na máquina
+  virtual.
+- `pinker <arquivo.b>` executa um bytecode gravado antes, depois de conferi-lo com o
+  verificador do `.b`. `pinker <arquivo.s>` confere a árvore verificada com o verificador
+  do `.s`, traduz para bytecode e executa (ver [`arquivos.md`](arquivos.md)). Também é
+  possível partir de um `.t` ou de um `.a`: o pipeline começa na etapa seguinte à do
+  arquivo.
 - Com `--emit=<etapa>`, o pipeline para na etapa pedida e grava o resultado dela, sem
   executar. Assim, a observação das etapas anteriores continua independente da execução.

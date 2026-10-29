@@ -1,9 +1,17 @@
 //! Os programas de `exemplos/` continuam executando, com a saída esperada, tanto direto
-//! quanto pelo pipeline por arquivos.
+//! quanto pelo pipeline por arquivos, e a máquina virtual concorda com o interpretador de
+//! árvore em cada um.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+use pinker::bytecode;
+use pinker::lexer::tokenize;
+use pinker::lower::lower;
+use pinker::parser::parse;
+use pinker::semantic::check;
+use pinker::{interpreter, vm};
 
 // pink-nav: start
 // pink-resume: Cada exemplo com a saída e o código de término esperados; todo .pk de exemplos/ precisa estar na lista.
@@ -64,8 +72,8 @@ fn todo_exemplo_esta_na_lista() {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: Executa cada exemplo direto e pelo pipeline por arquivos (.t, .a, .s) e compara a saída e o diagnóstico.
-// pink-keywords: teste, exemplos, pipeline, arquivo, execução, equivalência
+// pink-resume: Executa cada exemplo direto e pelo pipeline por arquivos (.t, .a, .s, .b) e compara a saída e o diagnóstico; a VM concorda com o interpretador.
+// pink-keywords: teste, exemplos, pipeline, arquivo, execução, equivalência, bytecode, vm, interpretador, paridade
 fn pinker(args: &[&Path]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_pinker"))
         .args(args)
@@ -88,7 +96,12 @@ fn exemplos_executam_direto_e_por_arquivos() {
         assert_eq!(direct.status.code(), Some(code), "{name}: {direct:?}");
         assert_eq!(String::from_utf8_lossy(&direct.stdout), expected, "{name}");
 
-        for (from, stage) in [("pk", "tokens"), ("t", "ast"), ("a", "semantic")] {
+        for (from, stage) in [
+            ("pk", "tokens"),
+            ("t", "ast"),
+            ("a", "semantic"),
+            ("s", "bytecode"),
+        ] {
             let emit = format!("--emit={stage}");
             let output = pinker(&[&source.with_extension(from), Path::new(&emit)]);
             assert!(
@@ -96,10 +109,37 @@ fn exemplos_executam_direto_e_por_arquivos() {
                 "{name}: {from} -> {stage}: {output:?}"
             );
         }
-        let by_file = pinker(&[&source.with_extension("s")]);
-        assert_eq!(by_file.status.code(), direct.status.code(), "{name}");
-        assert_eq!(by_file.stdout, direct.stdout, "{name}");
-        assert_eq!(by_file.stderr, direct.stderr, "{name}");
+        // Tanto o .s quanto o .b executam, e igual ao caminho direto.
+        for extension in ["s", "b"] {
+            let by_file = pinker(&[&source.with_extension(extension)]);
+            assert_eq!(
+                by_file.status.code(),
+                direct.status.code(),
+                "{name}.{extension}"
+            );
+            assert_eq!(by_file.stdout, direct.stdout, "{name}.{extension}");
+            assert_eq!(by_file.stderr, direct.stderr, "{name}.{extension}");
+        }
+    }
+}
+
+#[test]
+fn vm_e_interpretador_concordam_nos_exemplos() {
+    for &(name, ..) in EXAMPLES {
+        let source = fs::read_to_string(examples_dir().join(format!("{name}.pk"))).unwrap();
+        let program = check(&parse(&tokenize(&source).unwrap()).unwrap()).unwrap();
+        let lowered = lower(&program);
+        bytecode::verify(&lowered).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        // O .b gravado e lido de volta é o mesmo bytecode.
+        let content = bytecode::render(&lowered, "x.pk");
+        assert_eq!(bytecode::read(&content).unwrap(), lowered, "{name}");
+
+        let mut by_tree = Vec::new();
+        let tree_result = interpreter::run(&program, &mut by_tree);
+        let mut by_vm = Vec::new();
+        let vm_result = vm::run(&lowered, &mut by_vm);
+        assert_eq!(by_vm, by_tree, "{name}");
+        assert_eq!(vm_result, tree_result, "{name}");
     }
 }
 // pink-nav: end

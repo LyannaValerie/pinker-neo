@@ -2,7 +2,7 @@
 //!
 //! Tem a mesma forma do programa, mas com os tipos resolvidos (`int` já é `i64`), cada
 //! uso de variável ligado à sua declaração e cada chamada ligada à função chamada. É a
-//! entrada do futuro interpretador.
+//! entrada da tradução para bytecode (`lower`) e do interpretador de árvore.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -310,7 +310,18 @@ pub fn breaks_out(block: &CheckedBlock) -> bool {
 /// nome, e consulta a tabela para saber o tipo, a mutabilidade e a posição de cada uma.
 pub fn render(program: &CheckedProgram, source: &str) -> String {
     let mut output = header(Format::Semantic, source);
-    render_symbols(&mut output, program);
+    let symbols: Vec<FunctionSymbols> = program
+        .functions
+        .iter()
+        .map(|function| FunctionSymbols {
+            name: &function.name,
+            name_position: function.name_position,
+            parameters: &function.parameters,
+            result: function.result,
+            variables: &function.variables,
+        })
+        .collect();
+    render_symbols(&mut output, &symbols);
     output.push_str("\n[árvore]\n#POSIÇÃO NÓ\n");
     let mut renderer = Renderer {
         program,
@@ -323,21 +334,30 @@ pub fn render(program: &CheckedProgram, source: &str) -> String {
     renderer.output
 }
 
+/// O que a tabela de símbolos mostra de uma função. O `.s` e o `.b` gravam a mesma tabela.
+pub(crate) struct FunctionSymbols<'a> {
+    pub name: &'a str,
+    pub name_position: Position,
+    pub parameters: &'a [usize],
+    pub result: Option<Type>,
+    pub variables: &'a [Variable],
+}
+
 /// A tabela de símbolos. As colunas são alinhadas só para leitura; a última de cada linha
 /// vai até o fim dela, porque pode ter espaços.
-fn render_symbols(output: &mut String, program: &CheckedProgram) {
+pub(crate) fn render_symbols(output: &mut String, functions: &[FunctionSymbols]) {
     let width = |title: &str, values: &mut dyn Iterator<Item = usize>| {
         values.fold(title.chars().count(), usize::max)
     };
     let position = |position: Position| format!("{}:{}", position.line, position.column);
 
-    let name_width = width("#NOME", &mut program.functions.iter().map(|f| f.name.len()));
+    let name_width = width("#NOME", &mut functions.iter().map(|f| f.name.len()));
     output.push_str("[funções]\n");
     output.push_str(&format!(
         "{:<name_width$}  DECLARAÇÃO  ASSINATURA\n",
         "#NOME"
     ));
-    for function in &program.functions {
+    for function in functions {
         let parameters: Vec<String> = function
             .parameters
             .iter()
@@ -355,8 +375,8 @@ fn render_symbols(output: &mut String, program: &CheckedProgram) {
         ));
     }
 
-    for function in &program.functions {
-        let variables = &function.variables;
+    for function in functions {
+        let variables = function.variables;
         let number_width = width("#N", &mut (0..variables.len()).map(|n| n.to_string().len()));
         let name_width = width("NOME", &mut variables.iter().map(|v| v.name.len()));
         output.push_str(&format!("\n[variáveis {}]\n", function.name));
@@ -526,9 +546,78 @@ impl<'a> Renderer<'a> {
 /// funções e as variáveis vêm da tabela de símbolos; a árvore precisa concordar com ela.
 /// Confere a forma, as seções e os vínculos entre a árvore e a tabela; a coerência dos
 /// tipos e do fluxo fica para o verificador (`verifier::verify`), que precisa rodar antes
-/// do interpretador.
+/// da tradução para bytecode ou do interpretador.
 pub fn read(content: &str) -> Result<CheckedProgram, FormatError> {
-    let sections = sections(content)?;
+    let sections = sections(content, "árvore", "[árvore]")?;
+    let tree = match sections.body.as_slice() {
+        [(_, None, lines)] => lines.clone(),
+        [(_, None, _), (line, ..), ..] => {
+            return Err(format_error(
+                *line,
+                "a seção [árvore] aparece mais de uma vez",
+            ));
+        }
+        [(line, Some(name), _), ..] => {
+            return Err(format_error(
+                *line,
+                format!("seção '[árvore {name}]' desconhecida; esperava [árvore]"),
+            ));
+        }
+        [] => unreachable!("sections exige a seção do corpo"),
+    };
+    let Symbols {
+        functions: symbols,
+        tables,
+        by_name: functions_by_name,
+    } = read_symbols(&sections)?;
+
+    let mut reader = TreeReader::from_lines(tree)?;
+    let mut functions = Vec::new();
+    for (symbol, table) in symbols.iter().zip(tables) {
+        let line = reader.child(0)?.ok_or_else(|| {
+            format_error(
+                sections.body_title,
+                format!("falta a função '{}' na árvore", symbol.name),
+            )
+        })?;
+        let (rows, variables): (Vec<usize>, Vec<Variable>) = table.into_iter().unzip();
+        let function = FunctionReader {
+            reader: &mut reader,
+            functions: &functions_by_name,
+            symbol,
+            declared: vec![false; variables.len()],
+            rows,
+            variables,
+        }
+        .function(line)?;
+        functions.push(function);
+    }
+    if let Some(line) = reader.child(0)? {
+        return Err(format_error(
+            line.line,
+            format!(
+                "a árvore tem uma função a mais que a tabela: '{}'",
+                line.text
+            ),
+        ));
+    }
+    let main = *functions_by_name
+        .get("main")
+        .ok_or_else(|| format_error(1, "o programa não tem uma função 'main'"))?;
+    Ok(CheckedProgram { functions, main })
+}
+
+/// A tabela de símbolos lida de um arquivo: as funções, as variáveis de cada uma (com a
+/// linha de cada variável na tabela) e o índice de cada função pelo nome.
+pub(crate) struct Symbols {
+    pub functions: Vec<FunctionSymbol>,
+    pub tables: Vec<Vec<(usize, Variable)>>,
+    pub by_name: HashMap<String, usize>,
+}
+
+/// Lê as seções `[funções]` e `[variáveis <função>]`, conferindo que há uma seção de
+/// variáveis por função, na ordem da tabela de funções.
+pub(crate) fn read_symbols(sections: &Sections) -> Result<Symbols, FormatError> {
     let mut symbols = Vec::new();
     let mut functions_by_name = HashMap::new();
     for &(line, text) in &sections.functions {
@@ -575,73 +664,50 @@ pub fn read(content: &str) -> Result<CheckedProgram, FormatError> {
     }
     if let Some(symbol) = symbols.get(tables.len()) {
         return Err(format_error(
-            sections.tree_title,
+            sections.body_title,
             format!("falta a seção [variáveis {}]", symbol.name),
         ));
     }
-
-    let mut reader = TreeReader::from_lines(sections.tree)?;
-    let mut functions = Vec::new();
-    for (symbol, table) in symbols.iter().zip(tables) {
-        let line = reader.child(0)?.ok_or_else(|| {
-            format_error(
-                sections.tree_title,
-                format!("falta a função '{}' na árvore", symbol.name),
-            )
-        })?;
-        let (rows, variables): (Vec<usize>, Vec<Variable>) = table.into_iter().unzip();
-        let function = FunctionReader {
-            reader: &mut reader,
-            functions: &functions_by_name,
-            symbol,
-            declared: vec![false; variables.len()],
-            rows,
-            variables,
-        }
-        .function(line)?;
-        functions.push(function);
-    }
-    if let Some(line) = reader.child(0)? {
-        return Err(format_error(
-            line.line,
-            format!(
-                "a árvore tem uma função a mais que a tabela: '{}'",
-                line.text
-            ),
-        ));
-    }
-    let main = *functions_by_name
-        .get("main")
-        .ok_or_else(|| format_error(1, "o programa não tem uma função 'main'"))?;
-    Ok(CheckedProgram { functions, main })
+    Ok(Symbols {
+        functions: symbols,
+        tables,
+        by_name: functions_by_name,
+    })
 }
 
-type Lines<'a> = Vec<(usize, &'a str)>;
+pub(crate) type Lines<'a> = Vec<(usize, &'a str)>;
 
 /// As linhas de cada seção, sem comentários e sem linhas em branco.
-struct Sections<'a> {
-    functions: Lines<'a>,
+pub(crate) struct Sections<'a> {
+    pub functions: Lines<'a>,
     /// Uma por seção `[variáveis <função>]`: a linha do título, o nome e as linhas.
-    variables: Vec<(usize, &'a str, Lines<'a>)>,
-    /// A linha do título `[árvore]`.
-    tree_title: usize,
-    tree: Lines<'a>,
+    pub variables: Vec<(usize, &'a str, Lines<'a>)>,
+    /// A linha do título da primeira seção do corpo.
+    pub body_title: usize,
+    /// As seções do corpo (`[árvore]` no `.s`, `[código <função>]` no `.b`): a linha do
+    /// título, o nome depois da palavra do título, se houver, e as linhas.
+    pub body: Vec<(usize, Option<&'a str>, Lines<'a>)>,
 }
 
-/// Separa as seções. A ordem é fixa: `[funções]`, as `[variáveis <função>]` e `[árvore]`.
-fn sections(content: &str) -> Result<Sections<'_>, FormatError> {
+/// Separa as seções. A ordem é fixa: `[funções]`, as `[variáveis <função>]` e as seções
+/// do corpo, cujo título começa com `body` (`order` descreve o corpo nas mensagens).
+pub(crate) fn sections<'a>(
+    content: &'a str,
+    body: &str,
+    order: &str,
+) -> Result<Sections<'a>, FormatError> {
     #[derive(PartialEq)]
     enum Section {
         None,
         Functions,
         Variables,
-        Tree,
+        Body,
     }
     let mut sections = Sections {
         functions: Vec::new(),
         variables: Vec::new(),
-        tree_title: 0,
-        tree: Vec::new(),
+        body_title: 0,
+        body: Vec::new(),
     };
     let mut current = Section::None;
     for (line, text) in content_lines(content) {
@@ -651,15 +717,23 @@ fn sections(content: &str) -> Result<Sections<'_>, FormatError> {
             .and_then(|t| t.strip_suffix(']'))
         {
             let started = matches!(current, Section::Functions | Section::Variables);
-            match title.strip_prefix("variáveis ") {
+            let body_name = match title.strip_prefix(body) {
+                Some("") => Some(None),
+                Some(rest) => rest.strip_prefix(' ').map(Some),
+                None => None,
+            };
+            match (title.strip_prefix("variáveis "), body_name) {
                 _ if title == "funções" && current == Section::None => {
                     current = Section::Functions;
                 }
-                _ if title == "árvore" && started => {
-                    sections.tree_title = line;
-                    current = Section::Tree;
+                (_, Some(name)) if started || current == Section::Body => {
+                    if current != Section::Body {
+                        sections.body_title = line;
+                    }
+                    sections.body.push((line, name, Vec::new()));
+                    current = Section::Body;
                 }
-                Some(name) if started => {
+                (Some(name), _) if started => {
                     sections.variables.push((line, name, Vec::new()));
                     current = Section::Variables;
                 }
@@ -667,7 +741,7 @@ fn sections(content: &str) -> Result<Sections<'_>, FormatError> {
                     return Err(format_error(
                         line,
                         format!(
-                            "seção '[{title}]' desconhecida ou fora de ordem; a ordem é [funções], [variáveis <função>] e [árvore]"
+                            "seção '[{title}]' desconhecida ou fora de ordem; a ordem é [funções], [variáveis <função>] e {order}"
                         ),
                     ));
                 }
@@ -681,23 +755,26 @@ fn sections(content: &str) -> Result<Sections<'_>, FormatError> {
                 let last = sections.variables.last_mut().expect("seção aberta");
                 last.2.push((line, text));
             }
-            Section::Tree => sections.tree.push((line, text)),
+            Section::Body => {
+                let last = sections.body.last_mut().expect("seção aberta");
+                last.2.push((line, text));
+            }
         }
     }
-    if current != Section::Tree {
+    if current != Section::Body {
         let last = content.lines().count().max(1);
-        return Err(format_error(last, "falta a seção [árvore]"));
+        return Err(format_error(last, format!("falta a seção {order}")));
     }
     Ok(sections)
 }
 
 /// Uma linha da tabela de funções.
-struct FunctionSymbol {
-    name: String,
-    position: Position,
-    parameters: Vec<Type>,
-    result: Option<Type>,
-    line: usize,
+pub(crate) struct FunctionSymbol {
+    pub name: String,
+    pub position: Position,
+    pub parameters: Vec<Type>,
+    pub result: Option<Type>,
+    pub line: usize,
 }
 
 /// `nome  linha:coluna  (tipo, tipo) -> resultado`; sem resultado, termina no `)`.
@@ -765,12 +842,12 @@ fn variable_symbol(index: usize, line: usize, text: &str) -> Result<Variable, Fo
     })
 }
 
-fn parse_type(text: &str, line: usize) -> Result<Type, FormatError> {
+pub(crate) fn parse_type(text: &str, line: usize) -> Result<Type, FormatError> {
     Type::from_name(text).ok_or_else(|| format_error(line, format!("tipo desconhecido '{text}'")))
 }
 
 /// `nome#n`: o nome e o número da variável.
-fn variable_reference(text: &str, line: usize) -> Result<(&str, usize), FormatError> {
+pub(crate) fn variable_reference(text: &str, line: usize) -> Result<(&str, usize), FormatError> {
     let invalid = || format_error(line, format!("esperava nome#número, encontrei '{text}'"));
     let (name, index) = text.split_once('#').ok_or_else(invalid)?;
     let index = index.parse().map_err(|_| invalid())?;

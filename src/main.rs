@@ -7,23 +7,24 @@ use std::{env, fs, thread};
 
 use pinker::artifact::{self, Format, FormatError};
 use pinker::diagnostic::Diagnostic;
-use pinker::{ast, checked, interpreter, lexer, parser, semantic, token, verifier};
+use pinker::{ast, bytecode, checked, lexer, lower, parser, semantic, token, verifier, vm};
 
 const USAGE: &str = "uso: pinker <arquivo> [--emit=<etapa>] [-o <saída>]
 
-  <arquivo>       código-fonte (.pk) ou o arquivo de uma etapa (.t, .a ou .s); o
+  <arquivo>       código-fonte (.pk) ou o arquivo de uma etapa (.t, .a, .s ou .b); o
                   pipeline começa na etapa seguinte à do arquivo
   --emit=<etapa>  grava o resultado de uma etapa do pipeline e para nela
-                  etapas: tokens (.t), ast (.a), semantic (.s)
+                  etapas: tokens (.t), ast (.a), semantic (.s), bytecode (.b)
   -o <saída>      caminho do arquivo gravado (padrão: o arquivo de entrada com a
                   extensão da etapa, como ola.t); '-' escreve na saída padrão
   -h, --help      mostra esta ajuda
 
-Sem --emit, o programa passa pelas etapas restantes e é executado:
+Sem --emit, o programa passa pelas etapas restantes e é executado na máquina virtual:
   pinker ola.pk --emit=tokens     # ola.pk -> ola.t
   pinker ola.t --emit=ast         # ola.t  -> ola.a
   pinker ola.a --emit=semantic    # ola.a  -> ola.s
-  pinker ola.s                    # executa
+  pinker ola.s --emit=bytecode    # ola.s  -> ola.b
+  pinker ola.b                    # executa
 
 Códigos de saída: 0 sucesso, 1 erro de compilação ou de arquivo, 2 uso incorreto,
 3 falha de execução.";
@@ -48,7 +49,9 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
             return Ok(None);
         } else if let Some(name) = arg.strip_prefix("--emit=") {
             let format = Format::from_name(name).ok_or_else(|| {
-                format!("etapa desconhecida '{name}'; etapas disponíveis: tokens, ast, semantic")
+                format!(
+                    "etapa desconhecida '{name}'; etapas disponíveis: tokens, ast, semantic, bytecode"
+                )
             })?;
             emit = Some(format);
         } else if arg == "-o" {
@@ -77,9 +80,10 @@ fn parse_args(args: &[String]) -> Result<Option<Options>, String> {
 // pink-nav: start
 // pink-resume: Ponto de entrada: thread com pilha ampliada, códigos de saída e o tipo de falha com o seu código.
 // pink-keywords: main, thread, pilha, código de saída, falha
-/// Pilha da thread que roda o pipeline. O interpretador é recursivo, e esta pilha foi
-/// validada nos cenários testados (até `MAX_CALL_DEPTH` chamadas aninhadas, em debug e
-/// release); não é uma garantia geral contra estouro.
+/// Pilha da thread que roda o pipeline. A máquina virtual não usa a pilha do Rust para as
+/// chamadas da Pinker, mas o parser, a análise semântica, os verificadores e a tradução
+/// para bytecode são recursivos, na proporção do aninhamento do programa; não é uma
+/// garantia geral contra estouro.
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 fn main() -> ExitCode {
@@ -132,18 +136,19 @@ impl From<String> for Failure {
 // pink-nav: end
 
 // pink-nav: start
-// pink-resume: O pipeline: reconhece a entrada pelo cabeçalho, avança etapa por etapa, grava a pedida ou executa.
-// pink-keywords: pipeline, etapa, entrada, cabeçalho, tokens, ast, semantic, executar, verificador
+// pink-resume: O pipeline: reconhece a entrada pelo cabeçalho, avança etapa por etapa, grava a pedida ou executa na VM.
+// pink-keywords: pipeline, etapa, entrada, cabeçalho, tokens, ast, semantic, bytecode, executar, verificador, vm
 /// O que o pipeline tem em mãos depois de cada etapa.
 enum Data {
     Source,
     Tokens(Vec<token::Token>),
     Ast(ast::Program),
     Semantic(checked::CheckedProgram),
+    Bytecode(bytecode::BytecodeProgram),
 }
 
 /// Roda as etapas a partir da entrada e para na pedida por `--emit`, se houver. Sem
-/// `--emit`, executa o programa.
+/// `--emit`, executa o programa na máquina virtual.
 fn run(options: &Options) -> Result<(), Failure> {
     let path = &options.input;
     let content = fs::read_to_string(path)
@@ -186,6 +191,13 @@ fn run(options: &Options) -> Result<(), Failure> {
             verifier::verify(&program).map_err(failed)?;
             Data::Semantic(program)
         }
+        Some(Format::Bytecode) => {
+            let program = bytecode::read(&content).map_err(malformed)?;
+            // Um .b pode ter sido editado à mão: o verificador garante que o bytecode
+            // respeita o que a máquina virtual supõe.
+            bytecode::verify(&program).map_err(failed)?;
+            Data::Bytecode(program)
+        }
     };
 
     let output = options.output.as_deref();
@@ -211,20 +223,26 @@ fn run(options: &Options) -> Result<(), Failure> {
                 if options.emit == Some(Format::Semantic) {
                     return emit(Format::Semantic, checked::render(&program, &source));
                 }
+                Data::Bytecode(lower::lower(&program))
+            }
+            Data::Bytecode(program) => {
+                if options.emit == Some(Format::Bytecode) {
+                    return emit(Format::Bytecode, bytecode::render(&program, &source));
+                }
                 return execute(&program, &source);
             }
         };
     }
 }
 
-fn execute(program: &checked::CheckedProgram, source: &str) -> Result<(), Failure> {
+fn execute(program: &bytecode::BytecodeProgram, source: &str) -> Result<(), Failure> {
     let mut stdout = BufWriter::new(Output {
         inner: io::stdout().lock(),
         failed: false,
     });
     // Ao terminar normalmente, `run` já descarrega a saída e devolve a falha de escrita, se
     // houver.
-    let Err(e) = interpreter::run(program, &mut stdout) else {
+    let Err(e) = vm::run(program, &mut stdout) else {
         return Ok(());
     };
     // Numa falha, a saída escrita antes dela aparece antes do diagnóstico. Se nem isso for

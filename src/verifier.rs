@@ -1,8 +1,8 @@
 //! Verificador da árvore verificada lida de um arquivo `.s`.
 //!
-//! Um `.s` pode ter sido editado à mão, e depois dele nada mais confere o programa. O
-//! interpretador parte do princípio de que a árvore respeita as regras da análise
-//! semântica; este verificador confere isso antes da execução. Ele não infere tipos nem
+//! Um `.s` pode ter sido editado à mão, e depois dele nada mais confere o programa. A
+//! tradução para bytecode e o interpretador partem do princípio de que a árvore respeita
+//! as regras da análise semântica; este verificador confere isso antes deles. Ele não infere tipos nem
 //! resolve nomes: só confere se os tipos e vínculos já anotados são coerentes.
 
 use crate::ast::{BinaryOperator, UnaryOperator};

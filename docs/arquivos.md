@@ -8,7 +8,8 @@ curiosidade pode inspecionar ou editar o arquivo de qualquer etapa antes de segu
 pinker ola.pk --emit=tokens     # ola.pk -> ola.t   (lexer)
 pinker ola.t  --emit=ast        # ola.t  -> ola.a   (parser)
 pinker ola.a  --emit=semantic   # ola.a  -> ola.s   (análise semântica)
-pinker ola.s                    # executa           (verificador e interpretador)
+pinker ola.s  --emit=bytecode   # ola.s  -> ola.b   (tradução para bytecode)
+pinker ola.b                    # executa           (verificador e máquina virtual)
 ```
 
 `pinker ola.pk` continua rodando tudo de uma vez, na memória. Os dois caminhos dão o mesmo
@@ -18,7 +19,14 @@ resultado: cada arquivo gerado a partir do anterior é idêntico ao gerado diret
 |---|---|---|---|
 | `.t` | lexer (`--emit=tokens`) | parser | Os tokens |
 | `.a` | parser (`--emit=ast`) | análise semântica | A árvore de sintaxe |
-| `.s` | análise semântica (`--emit=semantic`) | verificador e interpretador | A árvore verificada |
+| `.s` | análise semântica (`--emit=semantic`) | verificador do `.s` e tradução para bytecode | A árvore verificada |
+| `.b` | tradução para bytecode (`--emit=bytecode`) | verificador do `.b` e máquina virtual | O bytecode |
+
+Sem `--emit`, o programa passa pelas etapas que faltam e executa na máquina virtual,
+qualquer que seja a etapa de entrada: `pinker ola.s` também traduz para bytecode e
+executa. O interpretador de árvore (`src/interpreter.rs`) não faz parte do caminho da CLI:
+fica como referência, e os testes exigem que ele e a máquina virtual concordem (ver
+[`execucao.md`](execucao.md)).
 
 As extensões são só convenção. A CLI reconhece o tipo do arquivo pelo cabeçalho.
 
@@ -31,9 +39,9 @@ origem:
 # pinker tokens 1 · fonte: ola.pk
 ```
 
-- O formato é `tokens`, `ast` ou `semantic`.
+- O formato é `tokens`, `ast`, `semantic` ou `bytecode`.
 - A versão é a do formato, e cada formato tem a sua: esta versão do `pinker` lê `tokens`
-  1, `ast` 1 e `semantic` 2. Um arquivo de outra versão é recusado com uma mensagem
+  1, `ast` 1, `semantic` 2 e `bytecode` 1. Um arquivo de outra versão é recusado com uma mensagem
   clara.
 - A fonte é o `.pk` de onde o arquivo veio. Os diagnósticos da linguagem das etapas
   seguintes apontam para ela. Ela é só uma origem declarada: como o resto do arquivo, pode
@@ -175,6 +183,71 @@ formato, com a linha do arquivo:
 - um `Parâmetro` de uma variável que a tabela diz ser `let`, ou o contrário;
 - uma assinatura cujos tipos não são os dos parâmetros declarados na árvore.
 
+## `.b`: bytecode
+
+O bytecode é o programa como uma lista de instruções de uma máquina de pilha, por função.
+Ele não tem mais a forma do código-fonte: `if`, `while`, `loop`, `break`, `continue` e o
+curto-circuito de `and` e `or` viraram saltos. O arquivo tem a mesma tabela de símbolos
+do `.s` e, no lugar da árvore, uma seção `[código <função> <posição>]` por função, na
+ordem da tabela de funções. A posição do título é a do `fun`.
+
+```text
+# pinker bytecode 1 · fonte: ola.pk
+[funções]
+...
+[código soma 3:1]
+#N  POSIÇÃO  INSTRUÇÃO
+0   4:10     load a#0
+1   4:14     load b#1
+2   4:12     add.i64
+3   4:5      give
+
+[código main 6:1]
+#N  POSIÇÃO  INSTRUÇÃO
+0   7:22     const.i64 2
+1   7:25     const.i64 3
+2   7:17     call soma
+3   7:5      store total#0
+4   8:8      load total#0
+5   8:16     const.i64 4
+6   8:14     gt.i64
+7   8:18     jump_false 13
+...
+20  7:5      clear total#0
+21  6:1      give
+```
+
+- Uma linha por instrução: o número (a partir de 0, na ordem das linhas), a posição no
+  código-fonte de que ela veio e a instrução. Uma falha de execução aponta essa posição.
+- A instrução é um mnemônico, com os tipos depois de pontos, e um operando, se houver.
+- Cada chamada tem uma pilha de valores; "empilha" e "desempilha" se referem a ela.
+- Os parâmetros são as variáveis da espécie `parâmetro`, na ordem dos números.
+
+| Instrução | Efeito |
+|---|---|
+| `const.<tipo> <valor>` | Empilha uma constante: `const.i64 -1`, `const.bool true`, `const.text "olá"` |
+| `load nome#n` | Empilha o valor da variável |
+| `store nome#n` | Desempilha um valor e o guarda na variável |
+| `clear nome#n` | Esvazia a variável: o bloco em que ela foi declarada terminou |
+| `add` `sub` `mul` `div` `rem` `.<inteiro>` | Desempilha dois inteiros e empilha o resultado, com overflow e divisão por zero conferidos |
+| `lt` `le` `gt` `ge` `.<inteiro>` | Desempilha dois inteiros e empilha a comparação |
+| `eq` `ne` `.<tipo>` | Desempilha dois valores e empilha a igualdade |
+| `neg.<inteiro>` | Troca o sinal de um inteiro com sinal |
+| `not` | Nega um `bool` |
+| `jump n` | Continua na instrução `n` |
+| `jump_false n` | Desempilha um `bool`; se for falso, continua na instrução `n` |
+| `call nome` | Desempilha os argumentos e chama a função; o resultado, se houver, fica na pilha |
+| `say.<tipo>` | Desempilha um valor e o escreve com uma quebra de linha |
+| `morph.<de>.<para>` | Converte um inteiro, se ele couber no tipo de destino |
+| `pop` | Descarta o valor do topo: o resultado de uma chamada solta |
+| `give` | Encerra a chamada; numa função com resultado, o valor devolvido é o do topo |
+
+A tradução (`src/lower.rs`) segue as mesmas regras do interpretador. Quando um bloco
+termina, as variáveis declaradas nele são esvaziadas com `clear`: no fim normal, e antes
+do salto de um `break` ou `continue` que sai dele. Uma função sem resultado que chega ao
+fim do corpo termina com um `give`. O código que vem depois de um `give`, `break` ou
+`continue` no mesmo bloco nunca executa e não é traduzido.
+
 ## Diagnósticos
 
 Há dois tipos de erro, e cada um aponta para um lugar diferente:
@@ -209,9 +282,38 @@ código 1, sem executar nada.
 Os arquivos `.t` e `.a` não precisam de verificador: o parser e a análise semântica já
 conferem tudo que vem deles.
 
+## O verificador do `.b`
+
+A máquina virtual parte do princípio de que o bytecode está certo: não confere tipos nem
+se uma variável tem valor. Ao ler um `.b`, o verificador (`src/bytecode.rs`) acompanha
+cada função por todos os caminhos possíveis e calcula, para cada instrução alcançável, os
+tipos na pilha e se cada variável está cheia, vazia ou pode estar das duas formas. Ele
+recusa:
+
+- uma instrução que desempilha um tipo diferente do que ela pede, ou de uma pilha vazia;
+- uma constante fora da faixa do tipo, ou `neg` de um inteiro sem sinal;
+- `load` de uma variável que pode estar vazia;
+- `store` numa variável imutável que pode já ter um valor. Um `let mut` pode guardar de
+  novo; um `let` só guarda quando está vazio. O bytecode não guarda os blocos: um
+  `clear` encerra a vida da variável, e um `store` depois dele começa uma vida nova, como
+  o `let` de um laço a cada volta. Por isso, um `clear` acrescentado à mão antes de um
+  `store` é aceito: o programa continua coerente, como se a variável tivesse sido
+  declarada de novo;
+- um salto para fora do código, ou uma instrução que pode deixar a execução passar da
+  última;
+- dois caminhos que chegam à mesma instrução com tipos diferentes na pilha;
+- um `give` cuja pilha não seja exatamente o resultado da função (ou vazia, sem
+  resultado);
+- uma `main` com parâmetros ou resultado.
+
+Um `.b` incoerente é recusado com `fonte:linha:coluna: erro: bytecode inconsistente:
+instrução <n>: ...` e código 1, sem executar nada. O bytecode traduzido de um `.s` não
+passa por esse verificador na CLI, porque vem de uma árvore já conferida; os testes
+conferem que todo bytecode traduzido passa nele.
+
 ## `.gitignore`
 
-Os arquivos `*.t`, `*.a` e `*.s` gerados pelo pipeline são ignorados pelo Git. Atenção:
+Os arquivos `*.t`, `*.a`, `*.s` e `*.b` gerados pelo pipeline são ignorados pelo Git. Atenção:
 `.s` é também a extensão usual de assembly, e `.a`, a de bibliotecas estáticas do C. Se o
 projeto passar a ter arquivos desses tipos, será preciso revisar o `.gitignore` ou as
 extensões do pipeline.

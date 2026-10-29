@@ -1,4 +1,8 @@
-//! Interpretador: executa a árvore verificada.
+//! Interpretador de árvore: executa a árvore verificada diretamente.
+//!
+//! Não é o caminho padrão da CLI, que traduz a árvore para bytecode e a executa na
+//! máquina virtual (`vm`). Fica como referência: os testes exigem que os dois deem a mesma
+//! saída e o mesmo diagnóstico, e as operações sobre valores são compartilhadas entre eles.
 //!
 //! Percorre a árvore produzida pela análise semântica e usa os vínculos já resolvidos:
 //! cada variável é uma posição no quadro da chamada, e cada chamada aponta para a função
@@ -56,12 +60,10 @@ pub fn run(program: &CheckedProgram, output: &mut dyn Write) -> Result<(), Diagn
     };
     let main = &program.functions[program.main];
     interpreter.call_function(program.main, Vec::new(), main.position)?;
-    interpreter.output.flush().map_err(|e| {
-        error(
-            format!("não foi possível escrever a saída: {e}"),
-            main.position,
-        )
-    })
+    interpreter
+        .output
+        .flush()
+        .map_err(|e| output_error(e, main.position))
 }
 
 struct Interpreter<'p> {
@@ -89,10 +91,7 @@ impl Interpreter<'_> {
         position: Position,
     ) -> Result<Option<Value>, Diagnostic> {
         if self.depth >= MAX_CALL_DEPTH {
-            return Err(error(
-                format!("limite de {MAX_CALL_DEPTH} chamadas aninhadas excedido"),
-                position,
-            ));
+            return Err(call_limit(position));
         }
         let function = &self.program.functions[index];
         let mut frame: Frame = vec![None; function.variables.len()];
@@ -224,14 +223,7 @@ impl Interpreter<'_> {
                 match (operator, operand) {
                     (UnaryOperator::Not, Value::Bool(value)) => Ok(Value::Bool(!value)),
                     (UnaryOperator::Negate, Value::Int(value)) => {
-                        let int = integer_type(expression.ty);
-                        if !int.contains(-value) {
-                            return Err(error(
-                                format!("overflow: -({value}) não cabe em {int}"),
-                                position,
-                            ));
-                        }
-                        Ok(Value::Int(-value))
+                        negate(value, integer_type(expression.ty), position)
                     }
                     (_, other) => unreachable!("operando verificado: {other:?}"),
                 }
@@ -263,35 +255,7 @@ impl Interpreter<'_> {
             _ => {}
         }
         let right = self.expression(right, frame)?;
-        match operator {
-            Equal => return Ok(Value::Bool(left == right)),
-            NotEqual => return Ok(Value::Bool(left != right)),
-            _ => {}
-        }
-        let (Value::Int(a), Value::Int(b)) = (left, right) else {
-            unreachable!("operandos verificados como inteiros");
-        };
-        let result = match operator {
-            Less => return Ok(Value::Bool(a < b)),
-            LessEqual => return Ok(Value::Bool(a <= b)),
-            Greater => return Ok(Value::Bool(a > b)),
-            GreaterEqual => return Ok(Value::Bool(a >= b)),
-            Divide | Remainder if b == 0 => return Err(error("divisão por zero", position)),
-            _ => arithmetic(operator, a, b),
-        };
-        let int = integer_type(ty);
-        let symbol = operator.as_str();
-        match result {
-            Some(value) if int.contains(value) => Ok(Value::Int(value)),
-            Some(value) => Err(error(
-                format!("overflow: {a} {symbol} {b} = {value} não cabe em {int}"),
-                position,
-            )),
-            None => Err(error(
-                format!("overflow: o resultado de {a} {symbol} {b} não cabe em {int}"),
-                position,
-            )),
-        }
+        binary_values(operator, left, right, ty, position)
     }
     // pink-nav: end
 
@@ -313,9 +277,7 @@ impl Interpreter<'_> {
         match call.callee {
             Callee::Function(index) => self.call_function(index, arguments, position),
             Callee::Say => {
-                writeln!(self.output, "{}", arguments[0]).map_err(|e| {
-                    error(format!("não foi possível escrever a saída: {e}"), position)
-                })?;
+                say(self.output, &arguments[0], position)?;
                 Ok(None)
             }
             Callee::Morph => {
@@ -323,13 +285,7 @@ impl Interpreter<'_> {
                     unreachable!("morph verificado com argumento inteiro");
                 };
                 let target = integer_type(ty.expect("morph sempre é uma expressão"));
-                if !target.contains(value) {
-                    return Err(error(
-                        format!("conversão fora da faixa: {value} não cabe em {target}"),
-                        position,
-                    ));
-                }
-                Ok(Some(Value::Int(value)))
+                Ok(Some(convert(value, target, position)?))
             }
         }
     }
@@ -342,6 +298,96 @@ fn integer_type(ty: Type) -> IntType {
         other => unreachable!("tipo verificado como inteiro: {other}"),
     }
 }
+
+// pink-nav: start
+// pink-resume: Operações sobre valores já avaliados, compartilhadas com a VM: aritmética verificada, comparações, negação, morph, say e as falhas de execução.
+// pink-keywords: operação, valor, aritmética, overflow, divisão por zero, comparação, negação, morph, say, limite de chamadas, vm
+/// Uma operação binária sobre dois valores já avaliados. `and` e `or` não passam por
+/// aqui: o curto-circuito decide antes se o operando da direita é avaliado. `ty` é o tipo
+/// do resultado.
+pub(crate) fn binary_values(
+    operator: BinaryOperator,
+    left: Value,
+    right: Value,
+    ty: Type,
+    position: Position,
+) -> Result<Value, Diagnostic> {
+    use BinaryOperator::*;
+    match operator {
+        Equal => return Ok(Value::Bool(left == right)),
+        NotEqual => return Ok(Value::Bool(left != right)),
+        _ => {}
+    }
+    let (Value::Int(a), Value::Int(b)) = (left, right) else {
+        unreachable!("operandos verificados como inteiros");
+    };
+    let result = match operator {
+        Less => return Ok(Value::Bool(a < b)),
+        LessEqual => return Ok(Value::Bool(a <= b)),
+        Greater => return Ok(Value::Bool(a > b)),
+        GreaterEqual => return Ok(Value::Bool(a >= b)),
+        Divide | Remainder if b == 0 => return Err(error("divisão por zero", position)),
+        _ => arithmetic(operator, a, b),
+    };
+    let int = integer_type(ty);
+    let symbol = operator.as_str();
+    match result {
+        Some(value) if int.contains(value) => Ok(Value::Int(value)),
+        Some(value) => Err(error(
+            format!("overflow: {a} {symbol} {b} = {value} não cabe em {int}"),
+            position,
+        )),
+        None => Err(error(
+            format!("overflow: o resultado de {a} {symbol} {b} não cabe em {int}"),
+            position,
+        )),
+    }
+}
+
+pub(crate) fn negate(value: i128, int: IntType, position: Position) -> Result<Value, Diagnostic> {
+    if !int.contains(-value) {
+        return Err(error(
+            format!("overflow: -({value}) não cabe em {int}"),
+            position,
+        ));
+    }
+    Ok(Value::Int(-value))
+}
+
+/// A conversão de `morph`: o valor não muda, mas precisa caber no tipo de destino.
+pub(crate) fn convert(
+    value: i128,
+    target: IntType,
+    position: Position,
+) -> Result<Value, Diagnostic> {
+    if !target.contains(value) {
+        return Err(error(
+            format!("conversão fora da faixa: {value} não cabe em {target}"),
+            position,
+        ));
+    }
+    Ok(Value::Int(value))
+}
+
+pub(crate) fn say(
+    output: &mut dyn Write,
+    value: &Value,
+    position: Position,
+) -> Result<(), Diagnostic> {
+    writeln!(output, "{value}").map_err(|e| output_error(e, position))
+}
+
+pub(crate) fn output_error(e: std::io::Error, position: Position) -> Diagnostic {
+    error(format!("não foi possível escrever a saída: {e}"), position)
+}
+
+pub(crate) fn call_limit(position: Position) -> Diagnostic {
+    error(
+        format!("limite de {MAX_CALL_DEPTH} chamadas aninhadas excedido"),
+        position,
+    )
+}
+// pink-nav: end
 
 // pink-nav: start
 // pink-resume: Testes internos: o quadro fica vazio depois de um bloco em qualquer saída, e o give conserva o texto devolvido.

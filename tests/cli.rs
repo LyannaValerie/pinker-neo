@@ -319,7 +319,7 @@ fn falha_de_execucao_com_saida_perdida_mantem_o_diagnostico() {
 #[test]
 fn emit_nao_executa_o_programa() {
     let input = source_file("emit_sem_execucao", "fun main()\n    say(\"executou\")\n");
-    for stage in ["tokens", "ast", "semantic"] {
+    for stage in ["tokens", "ast", "semantic", "bytecode"] {
         let output = pinker()
             .arg(&input)
             .arg(format!("--emit={stage}"))
@@ -459,6 +459,66 @@ fn s_adulterado_e_recusado_antes_de_executar() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("ola.pk:2:9: erro: árvore inconsistente"),
+        "{stderr}"
+    );
+}
+// pink-nav: end
+
+// pink-nav: start
+// pink-resume: --emit=bytecode grava o .b; um .b executa na VM; um .b adulterado é recusado antes de executar; o .b não volta a etapas anteriores.
+// pink-keywords: teste, cli, emit, bytecode, arquivo .b, vm, verificador, adulterado
+#[test]
+fn emit_bytecode_grava_o_b_que_executa() {
+    let input = source_file(
+        "emit_bytecode",
+        "fun main()\n    let x: u8 = 1\n    say(x)\n",
+    );
+    let status = pinker()
+        .arg(&input)
+        .arg("--emit=bytecode")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let compiled = input.with_extension("b");
+    let content = fs::read_to_string(&compiled).unwrap();
+    assert!(
+        content.starts_with("# pinker bytecode 1 · fonte: "),
+        "{content}"
+    );
+    assert!(content.contains("[código main 1:1]\n"), "{content}");
+    assert!(content.contains("store x#0\n"), "{content}");
+
+    let output = pinker().arg(&compiled).output().unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
+
+    let output = pinker()
+        .arg(&compiled)
+        .arg("--emit=semantic")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn b_adulterado_e_recusado_antes_de_executar() {
+    let input = source_file("b_adulterado", "fun main()\n    say(1)\n    say(2)\n");
+    pinker()
+        .arg(&input)
+        .arg("--emit=bytecode")
+        .status()
+        .unwrap();
+    let compiled = input.with_extension("b");
+    let edited = fs::read_to_string(&compiled)
+        .unwrap()
+        .replacen("say.i64", "say.text", 1);
+    fs::write(&compiled, edited).unwrap();
+    let output = pinker().arg(&compiled).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("ola.pk:2:5: erro: bytecode inconsistente"),
         "{stderr}"
     );
 }
